@@ -1,4 +1,5 @@
 import express from 'express';
+import cors from 'cors';
 import { config } from './config';
 import {
   getHolderCount,
@@ -11,6 +12,13 @@ import {
 import { isAddress } from 'viem';
 
 const app = express();
+
+// Enable CORS for all origins
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+}));
 
 app.get('/holders', (req, res) => {
   const { holderCount, lastUpdatedAt } = getHolderCount();
