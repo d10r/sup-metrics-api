@@ -40,7 +40,6 @@ app.get('/user_amount', async (req, res) => {
   try {
     const amount = await getVotingPower(address);
     res.json({
-      address,
       amount,
       timestamp: Math.floor(Date.now() / 1000)
     });
@@ -60,7 +59,6 @@ app.get('/user_delegate', async (req, res) => {
   try {
     const delegate = await getDelegateForUser(address);
     res.json({
-      address,
       delegate,
       timestamp: Math.floor(Date.now() / 1000)
     });
