@@ -1,0 +1,25 @@
+[
+  {
+    "constant": true,
+    "inputs": [
+      {
+        "name": "delegator",
+        "type": "address"
+      },
+      {
+        "name": "spaceId",
+        "type": "bytes32"
+      }
+    ],
+    "name": "delegation",
+    "outputs": [
+      {
+        "name": "",
+        "type": "uint256"
+      }
+    ],
+    "payable": false,
+    "stateMutability": "view",
+    "type": "function"
+  }
+] 

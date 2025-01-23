@@ -1,11 +1,15 @@
 import express from 'express';
 import { config } from './config';
-import { getHolderCount, updateHolderCount } from './metrics';
+import { getHolderCount, updateHolderCount, getDelegatedAmount, updateDelegatedAmount } from './metrics';
 
 const app = express();
 
 app.get('/holders', (req, res) => {
   res.json({ holderCount: getHolderCount() });
+});
+
+app.get('/delegated_amount', (req, res) => {
+  res.json({ delegatedAmount: getDelegatedAmount() });
 });
 
 const createPeriodicTask = (
@@ -32,9 +36,17 @@ app.listen(config.port, () => {
   const updateHolders = createPeriodicTask(
     'Update Holder Count',
     updateHolderCount,
-    config.updateIntervalMs
+    config.holdersUpdateInterval * 1000
   );
   updateHolders();
+  
+  // Start delegated amount updates
+  const updateDelegated = createPeriodicTask(
+    'Update Delegated Amount',
+    updateDelegatedAmount,
+    config.delegatedAmountUpdateInterval * 1000
+  );
+  updateDelegated();
   
   // Additional periodic tasks can be started here as needed
 }); 
