@@ -5,7 +5,8 @@ import {
   updateHolderCount,
   getDelegatedAmount,
   updateDelegatedAmount,
-  getVotingPower
+  getVotingPower,
+  getDelegateForUser
 } from './metrics';
 import { isAddress } from 'viem';
 
@@ -38,6 +39,26 @@ app.get('/user_amount', async (req, res) => {
   } catch (error) {
     console.error('Error getting user amount');
     res.status(500).json({ error: 'Failed to get user amount' });
+  }
+});
+
+app.get('/user_delegate', async (req, res) => {
+  const address = (req.query.address as string)?.toLowerCase();
+
+  if (!isAddress(address)) {
+    return res.status(400).json({ error: 'Invalid Ethereum address' });
+  }
+
+  try {
+    const delegate = await getDelegateForUser(address);
+    res.json({
+      address,
+      delegate,
+      timestamp: Math.floor(Date.now() / 1000)
+    });
+  } catch (error) {
+    console.error('Error getting user delegate');
+    res.status(500).json({ error: 'Failed to get user delegate' });
   }
 });
 

@@ -211,3 +211,31 @@ export const updateDelegatedAmount = async () => {
     console.error('Error updating delegated amount:', error);
   }
 };
+
+export const getDelegateForUser = async (address: string): Promise<string | null> => {
+  const query = `
+    {
+      delegations(first: 1, where: {
+        space: "${config.snapshotSpace}",
+        delegator: "${address.toLowerCase()}"
+      }, orderBy: timestamp, orderDirection: desc) {
+        delegate
+      }
+    }
+    `;
+
+  try {
+    const subgraphUrl = `https://gateway.thegraph.com/api/${config.graphNetworkApiKey}/subgraphs/id/${config.delegationSubgraphId}`;
+    const response = await axios.post(subgraphUrl, { query });
+
+    const delegations = response.data.data.delegations;
+    return delegations.length > 0 ? delegations[0].delegate : null;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      console.error(`Error fetching delegate for ${address}: ${error.response?.status} ${error.response?.statusText}`);
+    } else {
+      console.error(`Error fetching delegate for ${address}: ${error}`);
+    }
+    throw error;
+  }
+};
