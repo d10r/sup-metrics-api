@@ -1,15 +1,22 @@
 import express from 'express';
 import { config } from './config';
-import { getHolderCount, updateHolderCount, getDelegatedAmount, updateDelegatedAmount } from './metrics';
+import {
+  getHolderCount,
+  updateHolderCount,
+  getDelegatedAmount,
+  updateDelegatedAmount
+} from './metrics';
 
 const app = express();
 
 app.get('/holders', (req, res) => {
-  res.json({ holderCount: getHolderCount() });
+  const { holderCount, lastUpdatedAt } = getHolderCount();
+  res.json({ holderCount, lastUpdatedAt });
 });
 
 app.get('/delegated_amount', (req, res) => {
-  res.json({ delegatedAmount: getDelegatedAmount() });
+  const { delegatedAmount, lastUpdatedAt } = getDelegatedAmount();
+  res.json({ delegatedAmount, lastUpdatedAt });
 });
 
 const createPeriodicTask = (

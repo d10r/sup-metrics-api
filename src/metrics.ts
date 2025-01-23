@@ -11,7 +11,13 @@ let spaceConfig: {
   strategies: any[];
 } | null = null;
 
-export const getHolderCount = (): number => holderCount;
+let lastHolderUpdateAt: number = 0;
+let lastDelegatedUpdateAt: number = 0;
+
+export const getHolderCount = (): { holderCount: number; lastUpdatedAt: number } => ({
+  holderCount,
+  lastUpdatedAt: lastHolderUpdateAt
+});
 
 export const updateHolderCount = async () => {
   try {
@@ -60,6 +66,7 @@ export const updateHolderCount = async () => {
     });
 
     holderCount = Object.values(balances).filter((balance) => balance > 0).length;
+    lastHolderUpdateAt = Math.floor(Date.now() / 1000);
 
     console.log(`Updated holder count: ${holderCount}`);
   } catch (error) {
@@ -67,9 +74,12 @@ export const updateHolderCount = async () => {
   }
 }; 
 
-export const getDelegatedAmount = (): number => delegatedAmount;
+export const getDelegatedAmount = (): { delegatedAmount: number; lastUpdatedAt: number } => ({
+  delegatedAmount,
+  lastUpdatedAt: lastDelegatedUpdateAt
+});
 
-export const getSpaceConfig = async () => {
+export const loadSpaceConfig = async () => {
   try {
     // Fetch space configuration
     const query = `
@@ -106,17 +116,16 @@ export const getSpaceConfig = async () => {
       strategies: space.strategies
     };
 
-    console.log(`Initialized metrics for space ${config.snapshotSpace}`);
+    console.log(`Loaded space config for ${config.snapshotSpace}: ${JSON.stringify(spaceConfig, null, 2)}`);
   } catch (error) {
-    console.error('Error initializing metrics:', error);
+    console.error('Error loading space config:', error);
     throw error;
   }
 };
 
 export const updateDelegatedAmount = async () => {
   if (!spaceConfig) {
-    console.log("Initializing space config...");
-    await getSpaceConfig();
+    await loadSpaceConfig();
   }
 
   try {
@@ -153,7 +162,7 @@ export const updateDelegatedAmount = async () => {
     // Extract unique delegate addresses
     const delegateAddresses = Array.from(new Set(allDelegations.map((d: any) => d.delegate)));
 
-    console.log(`Getting voting power of for ${delegateAddresses.length} unique delegates (${allDelegations.length} delegations)`);
+    console.log(`Getting voting power of ${delegateAddresses.length} unique delegates (${allDelegations.length} delegations)`);
 
     // Get voting power for each delegate
     let totalDelegatedAmount = 0;
@@ -182,6 +191,8 @@ export const updateDelegatedAmount = async () => {
     }
 
     delegatedAmount = totalDelegatedAmount;
+    lastDelegatedUpdateAt = Math.floor(Date.now() / 1000);
+
     console.log(`Total delegated amount: ${delegatedAmount}`);
   } catch (error) {
     console.error('Error updating delegated amount:', error);
