@@ -123,6 +123,39 @@ export const loadSpaceConfig = async () => {
   }
 };
 
+export const getVotingPower = async (address: string): Promise<number> => {
+  if (!spaceConfig) {
+    await loadSpaceConfig();
+  }
+
+  try {
+    const scoreApiPayload = {
+      jsonrpc: "2.0",
+      method: "get_vp",
+      params: {
+        address: address,
+        space: config.snapshotSpace,
+        strategies: spaceConfig!.strategies,
+        network: spaceConfig!.network,
+        snapshot: "latest"
+      }
+    };
+
+    const response = await axios.post(config.snapshotScoreUrl, scoreApiPayload);
+    if (response.data?.result?.vp) {
+      return response.data.result.vp;
+    }
+    return 0;
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      console.error(`Error fetching voting power for ${address}: ${error.response?.status} ${error.response?.statusText}`);
+    } else {
+      console.error(`Error fetching voting power for ${address}: ${error}`);
+    }
+    throw error;
+  }
+};
+
 export const updateDelegatedAmount = async () => {
   if (!spaceConfig) {
     await loadSpaceConfig();
@@ -159,34 +192,14 @@ export const updateDelegatedAmount = async () => {
       }
     }
 
-    // Extract unique delegate addresses
     const delegateAddresses = Array.from(new Set(allDelegations.map((d: any) => d.delegate)));
 
     console.log(`Getting voting power of ${delegateAddresses.length} unique delegates (${allDelegations.length} delegations)`);
 
-    // Get voting power for each delegate
     let totalDelegatedAmount = 0;
     for (const address of delegateAddresses) {
-      const scoreApiPayload = {
-        jsonrpc: "2.0",
-        method: "get_vp",
-        params: {
-          address: address,
-          space: config.snapshotSpace,
-          strategies: spaceConfig!.strategies,
-          network: spaceConfig!.network,
-          snapshot: "latest"
-        }
-      };
-
-      try {
-        const response = await axios.post(config.snapshotScoreUrl, scoreApiPayload);
-        if (response.data?.result?.vp) {
-          totalDelegatedAmount += response.data.result.vp;
-        }
-      } catch (error) {
-        console.error(`Error fetching voting power for ${address}:`, error);
-      }
+      const votingPower = await getVotingPower(address);
+      totalDelegatedAmount += votingPower;
       process.stdout.write(".");
     }
 

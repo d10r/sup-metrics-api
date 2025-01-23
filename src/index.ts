@@ -4,8 +4,10 @@ import {
   getHolderCount,
   updateHolderCount,
   getDelegatedAmount,
-  updateDelegatedAmount
+  updateDelegatedAmount,
+  getVotingPower
 } from './metrics';
+import { isAddress } from 'viem';
 
 const app = express();
 
@@ -17,6 +19,26 @@ app.get('/holders', (req, res) => {
 app.get('/delegated_amount', (req, res) => {
   const { delegatedAmount, lastUpdatedAt } = getDelegatedAmount();
   res.json({ delegatedAmount, lastUpdatedAt });
+});
+
+app.get('/user_amount', async (req, res) => {
+  const address = (req.query.address as string).toLowerCase();
+
+  if (!isAddress(address)) {
+    return res.status(400).json({ error: 'Invalid Ethereum address' });
+  }
+
+  try {
+    const amount = await getVotingPower(address);
+    res.json({
+      address,
+      amount,
+      timestamp: Math.floor(Date.now() / 1000)
+    });
+  } catch (error) {
+    console.error('Error getting user amount');
+    res.status(500).json({ error: 'Failed to get user amount' });
+  }
 });
 
 const createPeriodicTask = (
