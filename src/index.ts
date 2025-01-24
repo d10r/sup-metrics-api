@@ -1,15 +1,9 @@
 import express from 'express';
 import cors from 'cors';
+import swaggerUi from 'swagger-ui-express';
 import { config } from './config';
-import {
-  getHolderCount,
-  updateHolderCount,
-  getDelegatedAmount,
-  updateDelegatedAmount,
-  getVotingPower,
-  getDelegateForUser
-} from './metrics';
-import { isAddress } from 'viem';
+import { updateDaoMembersCount, updateTotalDelegatedScore } from './metrics';
+import { RegisterRoutes } from './routes';
 
 const app = express();
 
@@ -20,57 +14,28 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
-// ==================== API ENDPOINTS ====================
+// Register TSOA routes
+RegisterRoutes(app);
 
-app.get('/holders', (req, res) => {
-  const { holderCount, lastUpdatedAt } = getHolderCount();
-  res.json({ holderCount, lastUpdatedAt });
+// Serve Swagger UI
+app.use('/docs', swaggerUi.serve, swaggerUi.setup(undefined, {
+  swaggerUrl: '/swagger.json',
+}));
+
+// Serve swagger.json
+app.get('/swagger.json', (_req, res) => {
+  res.sendFile(__dirname + '/swagger.json');
 });
 
-app.get('/delegated_amount', (req, res) => {
-  const { delegatedAmount, lastUpdatedAt } = getDelegatedAmount();
-  res.json({ delegatedAmount, lastUpdatedAt });
+// Error handling
+app.use(function errorHandler(err: any, req: express.Request, res: express.Response, next: express.NextFunction) {
+  if (err?.status === 400) {
+    return res.status(400).json({ error: err.message });
+  }
+  
+  console.error(err);
+  return res.status(500).json({ error: 'Internal server error' });
 });
-
-app.get('/user_amount', async (req, res) => {
-  const address = (req.query.address as string).toLowerCase();
-
-  if (!isAddress(address)) {
-    return res.status(400).json({ error: 'Invalid Ethereum address' });
-  }
-
-  try {
-    const amount = await getVotingPower(address);
-    res.json({
-      amount,
-      timestamp: Math.floor(Date.now() / 1000)
-    });
-  } catch (error) {
-    console.error('Error getting user amount');
-    res.status(500).json({ error: 'Failed to get user amount' });
-  }
-});
-
-app.get('/user_delegate', async (req, res) => {
-  const address = (req.query.address as string)?.toLowerCase();
-
-  if (!isAddress(address)) {
-    return res.status(400).json({ error: 'Invalid Ethereum address' });
-  }
-
-  try {
-    const delegate = await getDelegateForUser(address);
-    res.json({
-      delegate,
-      timestamp: Math.floor(Date.now() / 1000)
-    });
-  } catch (error) {
-    console.error('Error getting user delegate');
-    res.status(500).json({ error: 'Failed to get user delegate' });
-  }
-});
-
-// ===========================================================
 
 const createPeriodicTask = (
   name: string,
@@ -93,20 +58,18 @@ app.listen(config.port, () => {
   console.log(`Server running on port ${config.port}`);
   
   // Start holder count updates
-  const updateHolders = createPeriodicTask(
-    'Update Holder Count',
-    updateHolderCount,
-    config.holdersUpdateInterval * 1000
+  const updateDaoMembersCountTask = createPeriodicTask(
+    'Update DAO Members Count',
+    updateDaoMembersCount,
+    config.daoMembersCountUpdateInterval * 1000
   );
-  updateHolders();
+  updateDaoMembersCountTask();
   
   // Start delegated amount updates
-  const updateDelegated = createPeriodicTask(
-    'Update Delegated Amount',
-    updateDelegatedAmount,
-    config.delegatedAmountUpdateInterval * 1000
+  const updateTotalDelegatedScoreTask = createPeriodicTask(
+    'Update Total Delegated Score',
+    updateTotalDelegatedScore,
+    config.totalDelegatedScoreUpdateInterval * 1000
   );
-  updateDelegated();
-  
-  // Additional periodic tasks can be started here as needed
+  updateTotalDelegatedScoreTask();
 }); 

@@ -13,8 +13,8 @@ export const config = {
   snapshotScoreUrl: process.env.SNAPSHOT_SCORE_URL || '',
   snapshotSpace: process.env.SNAPSHOT_SPACE || '',
   port: parseInt(process.env.PORT || '3000', 10),
-  holdersUpdateInterval: parseInt(process.env.HOLDERS_UPDATE_INTERVAL || '60', 10),
-  delegatedAmountUpdateInterval: parseInt(process.env.DELEGATED_AMOUNT_UPDATE_INTERVAL || '60', 10),
+  daoMembersCountUpdateInterval: parseInt(process.env.DAO_MEMBERS_COUNT_UPDATE_INTERVAL || '60', 10),
+  totalDelegatedScoreUpdateInterval: parseInt(process.env.TOTAL_DELEGATED_SCORE_UPDATE_INTERVAL || '60', 10),
 }; 
 
 export const stringToBytes32 = (str: string) => {

@@ -1,11 +1,8 @@
 import axios from 'axios';
-import { config, stringToBytes32 } from './config';
-import { createPublicClient, http } from 'viem';
-import delegationAbi from './abis/DelegationContract.json';
-import { parseEther } from 'viem';
+import { config } from './config';
 
-let holderCount: number = 0;
-let delegatedAmount: number = 0;
+let daoMembersCount: number = 0;
+let totalDelegatedScore: number = 0;
 let spaceConfig: {
   network: string;
   strategies: any[];
@@ -14,12 +11,12 @@ let spaceConfig: {
 let lastHolderUpdateAt: number = 0;
 let lastDelegatedUpdateAt: number = 0;
 
-export const getHolderCount = (): { holderCount: number; lastUpdatedAt: number } => ({
-  holderCount,
+export const getDaoMembersCount = (): { daoMembersCount: number; lastUpdatedAt: number } => ({
+  daoMembersCount,
   lastUpdatedAt: lastHolderUpdateAt
 });
 
-export const updateHolderCount = async () => {
+export const updateDaoMembersCount = async () => {
   try {
     const pageSize = 1000;
     let skip = 0;
@@ -33,13 +30,9 @@ export const updateHolderCount = async () => {
             token: "${config.tokenAddress}",
             value_gt: 0
           }) {
-            from {
-              id
-            }
             to {
               id
             }
-            value
           }
         }
       `;
@@ -56,26 +49,19 @@ export const updateHolderCount = async () => {
       }
     }
 
-    const balances: { [address: string]: number } = {};
+    const uniqueReceivers = new Set(allTransfers.map((transfer: any) => transfer.to.id));
 
-    allTransfers.forEach((transfer: any) => {
-      const { from, to, value } = transfer;
-      // Assuming transfer value is a decimal string
-      balances[from.id] = (balances[from.id] || 0) - parseFloat(value);
-      balances[to.id] = (balances[to.id] || 0) + parseFloat(value);
-    });
-
-    holderCount = Object.values(balances).filter((balance) => balance > 0).length;
+    daoMembersCount = uniqueReceivers.size;
     lastHolderUpdateAt = Math.floor(Date.now() / 1000);
 
-    console.log(`Updated holder count: ${holderCount}`);
+    console.log(`Updated DAO members count: ${daoMembersCount}`);
   } catch (error) {
-    console.error('Error updating holder count:', error);
+    console.error('Error updating DAO members count:', error);
   }
 }; 
 
-export const getDelegatedAmount = (): { delegatedAmount: number; lastUpdatedAt: number } => ({
-  delegatedAmount,
+export const getTotalDelegatedScore = (): { totalDelegatedScore: number; lastUpdatedAt: number } => ({
+  totalDelegatedScore,
   lastUpdatedAt: lastDelegatedUpdateAt
 });
 
@@ -156,7 +142,7 @@ export const getVotingPower = async (address: string): Promise<number> => {
   }
 };
 
-export const updateDelegatedAmount = async () => {
+export const updateTotalDelegatedScore = async () => {
   if (!spaceConfig) {
     await loadSpaceConfig();
   }
@@ -196,19 +182,18 @@ export const updateDelegatedAmount = async () => {
 
     console.log(`Getting voting power of ${delegateAddresses.length} unique delegates (${allDelegations.length} delegations)`);
 
-    let totalDelegatedAmount = 0;
+    let totalDelegatedScore = 0;
     for (const address of delegateAddresses) {
       const votingPower = await getVotingPower(address);
-      totalDelegatedAmount += votingPower;
+      totalDelegatedScore += votingPower;
       process.stdout.write(".");
     }
 
-    delegatedAmount = totalDelegatedAmount;
     lastDelegatedUpdateAt = Math.floor(Date.now() / 1000);
 
-    console.log(`Total delegated amount: ${delegatedAmount}`);
+    console.log(`Total delegated score: ${totalDelegatedScore}`);
   } catch (error) {
-    console.error('Error updating delegated amount:', error);
+    console.error('Error updating delegated score:', error);
   }
 };
 

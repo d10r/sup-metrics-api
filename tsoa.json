@@ -1,0 +1,22 @@
+{
+  "entryFile": "src/index.ts",
+  "noImplicitAdditionalProperties": "throw-on-extras",
+  "controllerPathGlobs": ["src/**/*Controller.ts"],
+  "spec": {
+    "outputDirectory": "src",
+    "specVersion": 3,
+    "outputFormat": "json",
+    "specFileBaseName": "swagger",
+    "controllerPathGlobs": ["src/**/*Controller.ts"],
+    "tags": [
+      {
+        "name": "Token Metrics",
+        "description": "API endpoints for token metrics"
+      }
+    ]
+  },
+  "routes": {
+    "routesDir": "src",
+    "middleware": "express"
+  }
+} 
