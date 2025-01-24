@@ -20,6 +20,8 @@ app.use(cors({
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 
+// ==================== API ENDPOINTS ====================
+
 app.get('/holders', (req, res) => {
   const { holderCount, lastUpdatedAt } = getHolderCount();
   res.json({ holderCount, lastUpdatedAt });
@@ -67,6 +69,8 @@ app.get('/user_delegate', async (req, res) => {
     res.status(500).json({ error: 'Failed to get user delegate' });
   }
 });
+
+// ===========================================================
 
 const createPeriodicTask = (
   name: string,
