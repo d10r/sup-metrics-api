@@ -1,8 +1,12 @@
 {
-  "name": "token-metrics-api",
+  "name": "erc20-metrics-api",
   "version": "1.0.0",
   "description": "API providing real-time metrics for an ERC20 token on Base mainnet.",
   "main": "dist/index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/d10r/token-metrics-api/"
+  },
   "scripts": {
     "start": "node dist/index.js",
     "build": "tsoa spec-and-routes && tsc && cp src/swagger.json dist/",
