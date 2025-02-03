@@ -36,4 +36,16 @@ export interface UserDelegateResponse {
   delegate: string | null;
   /** Unix timestamp of the query */
   timestamp: number;
+}
+
+/**
+ * Response for config endpoint
+ */
+export interface ConfigResponse {
+  /** Token contract address for the ERC20 token */
+  tokenAddress: string;
+  /** Space identifier for Snapshot */
+  snapshotSpace: string;
+  /** URL for Snapshot Hub */
+  snapshotHubUrl: string;
 } 

@@ -10,8 +10,10 @@ import {
   DaoMembersCountResponse,
   TotalDelegatedScoreResponse,
   UserScoreResponse,
-  UserDelegateResponse
+  UserDelegateResponse,
+  ConfigResponse
 } from '../types';
+import { config } from '../config';
 
 @Route('v1')
 @Tags('Token Metrics')
@@ -84,6 +86,19 @@ export class MetricsController extends Controller {
     return {
       delegate,
       timestamp: Math.floor(Date.now() / 1000)
+    };
+  }
+
+  /**
+   * Get API configuration.<br><br>
+   * Returns tokenAddress, snapshotSpace and snapshotHubUrl.
+   */
+  @Get('/config')
+  public getConfig(): ConfigResponse {
+    return {
+      tokenAddress: config.tokenAddress,
+      snapshotSpace: config.snapshotSpace,
+      snapshotHubUrl: config.snapshotHubUrl,
     };
   }
 } 
