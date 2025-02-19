@@ -20,28 +20,30 @@ export const updateDaoMembersCount = async () => {
   try {
     const pageSize = 1000;
     let skip = 0;
-    let allTransfers: any[] = [];
+    let allHolders: any[] = [];
     let hasMore = true;
 
     while (hasMore) {
       const query = `
         {
-          transferEvents(first: ${pageSize}, skip: ${skip}, where: {
-            token: "${config.tokenAddress}",
-            value_gt: 0
-          }) {
-            to {
-              id
+          accountTokenSnapshots(
+            first: ${pageSize}
+            skip: ${skip}
+            where: {
+              token: "${config.tokenAddress.toLowerCase()}",
+              totalConnectedMemberships_gt: 0
             }
+          ) {
+            id
           }
         }
       `;
       const response = await axios.post(config.sfSubgraphUrl, { query });
 
-      const transfers = response.data.data.transferEvents;
-      allTransfers = allTransfers.concat(transfers);
+      const holders = response.data.data.accountTokenSnapshots;
+      allHolders = allHolders.concat(holders);
 
-      if (transfers.length < pageSize) {
+      if (holders.length < pageSize) {
         hasMore = false;
       } else {
         process.stdout.write(".");
@@ -49,9 +51,7 @@ export const updateDaoMembersCount = async () => {
       }
     }
 
-    const uniqueReceivers = new Set(allTransfers.map((transfer: any) => transfer.to.id));
-
-    daoMembersCount = uniqueReceivers.size;
+    daoMembersCount = allHolders.length;
     lastHolderUpdateAt = Math.floor(Date.now() / 1000);
 
     console.log(`Updated DAO members count: ${daoMembersCount}`);
@@ -91,6 +91,7 @@ export const loadSpaceConfig = async () => {
         }
       }
     );
+    console.log(response.data.data.space);
 
     const space = response.data.data.space;
     if (!space) {
