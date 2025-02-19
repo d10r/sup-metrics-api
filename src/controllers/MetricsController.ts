@@ -97,6 +97,7 @@ export class MetricsController extends Controller {
   public getConfig(): ConfigResponse {
     return {
       tokenAddress: config.tokenAddress,
+      lockerFactoryAddress: config.lockerFactoryAddress,
       snapshotSpace: config.snapshotSpace,
       snapshotHubUrl: config.snapshotHubUrl,
     };

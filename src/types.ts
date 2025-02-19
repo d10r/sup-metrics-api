@@ -44,6 +44,8 @@ export interface UserDelegateResponse {
 export interface ConfigResponse {
   /** Token contract address for the ERC20 token */
   tokenAddress: string;
+  /** Locker factory address */
+  lockerFactoryAddress: string;
   /** Space identifier for Snapshot */
   snapshotSpace: string;
   /** URL for Snapshot Hub */

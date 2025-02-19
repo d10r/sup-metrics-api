@@ -98,41 +98,28 @@ export const loadSpaceConfig = async () => {
       throw new Error(`Space ${config.snapshotSpace} not found`);
     }
 
-    let tmpDelegates = [
-      "0x4a6894Dd556fab996f8D50b521f900CAEedC168e",
-      "0xeD9d0A8e0f2e588160fd219B70b846d0f32c7513",
-      "0x476e2651bf97de8a26e4a05a9c8e00a6efa1390c",
-      "0x3e0cf03f718520F30300266dcF4DB50bA12d3331",
-      "0x95E9A0c113AA9931a4230f91AdE08A491D3f8d54",
-      "0x884Ff907D5fB8BAe239B64AA8aD18bA3f8196038",
-      "0x09A900eB2ff6e9AcA12d4d1a396DdC9bE0307661",
-      "0xd714Dd60e22BbB1cbAFD0e40dE5Cfa7bBDD3F3C8",
-      "0x869eC00FA1DC112917c781942Cc01c68521c415e",
-      "0x66582D24FEaD72555adaC681Cc621caCbB208324",
-      "0x02e919D2C55faeDAb3Ef919A5d62d9bCC8FE8E69",
-      "0x2a81C13F9366395c8FD1EA24912294230d062Db3",
-      "0x764E427020Ad72624075c61260192C6E486D15a5",
-      "0x433485B5951f250cEFDCbf197Cb0F60fdBE55513",
-      "0xbaD8bcc9Eb5749829cF12189fDD5c1230D6C85e8",
-      "0x7a738EfFD10bF108b7617Ec8E96a0722fa54C547",
-      "0x29131346d2f60595b27a3dad68a0ae8f82b99aa4",
-      "0x508dd44Ff3404e618D430D4562C3773B073a5Ccc",
-      "0xbdCA59f1346f6ccF05Ee0C28CE4491CdF119fb4C",
-      "0x5a858FDFeb85d800753cB35b7ed254eFa7d1F8f2",
-      "0xDa469A6C78D12996895721fceBA62E510b38FAf3"
-    ];
-
     // Use hardcoded strategy with provided delegates
+    const fountainHeadStrategy = {
+      name: "fountainhead",
+      params: {
+        tokenAddress: config.tokenAddress.toLowerCase(),
+        lockerFactoryAddress: config.lockerFactoryAddress.toLowerCase()
+      }
+    };
+
     spaceConfig = {
       network: space.network,
       strategies: [
         {
-          name: "fountainhead",
+          name: 'delegation',
           params: {
-            tokenAddress: config.tokenAddress.toLowerCase(),
-            lockerFactoryAddress: "0xA6694cAB43713287F7735dADc940b555db9d39D9".toLowerCase()
+            symbol: 'SUP (delegated)',
+            strategies: [
+              fountainHeadStrategy
+            ]
           }
-        }
+        },
+        fountainHeadStrategy
       ]
     };
 
@@ -226,8 +213,9 @@ export const updateTotalDelegatedScore = async () => {
 
     lastDelegatedUpdateAt = Math.floor(Date.now() / 1000);
 
-    console.log(`Total delegated score: ${totalDelegatedScore}`);
     totalDelegatedScore = newTotalDelegatedScore;
+    console.log(`Total delegated score: ${totalDelegatedScore}`);
+
   } catch (error) {
     console.error('Error updating delegated score:', error);
   }
