@@ -9,6 +9,16 @@ export interface DaoMembersCountResponse {
 }
 
 /**
+ * Address with score
+ */
+export interface AddressScore {
+  /** An address */
+  address: string;
+  /** A score */
+  score: number;
+}
+
+/**
  * Response for total delegated score endpoint
  */
 export interface TotalDelegatedScoreResponse {
@@ -16,6 +26,8 @@ export interface TotalDelegatedScoreResponse {
   totalDelegatedScore: number;
   /** Unix timestamp of last update */
   lastUpdatedAt: number;
+  /** Individual delegation scores by delegate address */
+  perDelegateScore: AddressScore[];
 }
 
 /**

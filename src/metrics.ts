@@ -1,5 +1,10 @@
 import axios from 'axios';
 import { config } from './config';
+import {
+  AddressScore,
+  TotalDelegatedScoreResponse,
+  DaoMembersCountResponse
+} from './types';
 
 let daoMembersCount: number = 0;
 let totalDelegatedScore: number = 0;
@@ -11,7 +16,9 @@ let spaceConfig: {
 let lastHolderUpdateAt: number = 0;
 let lastDelegatedUpdateAt: number = 0;
 
-export const getDaoMembersCount = (): { daoMembersCount: number; lastUpdatedAt: number } => ({
+let delegationScores: AddressScore[] = [];
+
+export const getDaoMembersCount = (): DaoMembersCountResponse => ({
   daoMembersCount,
   lastUpdatedAt: lastHolderUpdateAt
 });
@@ -60,8 +67,9 @@ export const updateDaoMembersCount = async () => {
   }
 }; 
 
-export const getTotalDelegatedScore = (): { totalDelegatedScore: number; lastUpdatedAt: number } => ({
+export const getTotalDelegatedScore = (): TotalDelegatedScoreResponse => ({
   totalDelegatedScore,
+  perDelegateScore: delegationScores,
   lastUpdatedAt: lastDelegatedUpdateAt
 });
 
@@ -205,17 +213,23 @@ export const updateTotalDelegatedScore = async () => {
     console.log(`Getting voting power of ${delegateAddresses.length} unique delegates (${allDelegations.length} delegations)`);
 
     let newTotalDelegatedScore = 0;
+    let newDelegationScores: AddressScore[] = [];
     for (const address of delegateAddresses) {
       const votingPower = await getVotingPower(address);
       newTotalDelegatedScore += votingPower;
+      newDelegationScores.push({
+        address,
+        score: votingPower
+      });
       process.stdout.write(".");
     }
 
     lastDelegatedUpdateAt = Math.floor(Date.now() / 1000);
 
     totalDelegatedScore = newTotalDelegatedScore;
-    console.log(`Total delegated score: ${totalDelegatedScore}`);
+    delegationScores = newDelegationScores;
 
+    console.log(`Total delegated score: ${totalDelegatedScore}`);
   } catch (error) {
     console.error('Error updating delegated score:', error);
   }
