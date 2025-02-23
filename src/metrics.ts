@@ -196,8 +196,12 @@ export const updateTotalDelegatedScore = async () => {
       const subgraphUrl = `https://gateway.thegraph.com/api/${config.graphNetworkApiKey}/subgraphs/id/${config.delegationSubgraphId}`;
       const response = await axios.post(subgraphUrl, { query });
 
-      const delegations = response.data.data.delegations;
+      // Log any errors in the response
+      if (response.data.errors) {
+        console.error(`GraphQL error at skip=${skip}:`, response.data.errors);
+      }
 
+      const delegations = response.data?.data?.delegations || [];
       allDelegations = allDelegations.concat(delegations);
 
       if (delegations.length < pageSize) {
