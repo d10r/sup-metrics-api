@@ -23,49 +23,70 @@ export const getDaoMembersCount = (): DaoMembersCountResponse => ({
   lastUpdatedAt: lastHolderUpdateAt
 });
 
-export const updateDaoMembersCount = async () => {
-  try {
-    const pageSize = 1000;
-    let skip = 0;
-    let allHolders: any[] = [];
-    let hasMore = true;
+async function queryAllPages<T>(
+  queryFn: (lastId: string) => string,
+  toItems: (response: any) => any[],
+  itemFn: (item: any) => T,
+  graphqlEndpoint: string
+): Promise<T[]> {
+  let lastId = "";
+  const items: T[] = [];
+  const pageSize = 1000;
 
-    while (hasMore) {
-      const query = `
-        {
-          accountTokenSnapshots(
-            first: ${pageSize}
-            skip: ${skip}
-            where: {
-              token: "${config.tokenAddress.toLowerCase()}",
-              totalConnectedMemberships_gt: 0
-            }
-          ) {
-            id
-          }
-        }
-      `;
-      const response = await axios.post(config.sfSubgraphUrl, { query });
+  while (true) {
+    const response = await axios.post(graphqlEndpoint, {
+      query: queryFn(lastId)
+    });
 
-      const holders = response.data.data.accountTokenSnapshots;
-      allHolders = allHolders.concat(holders);
-
-      if (holders.length < pageSize) {
-        hasMore = false;
-      } else {
-        process.stdout.write(".");
-        skip += pageSize;
-      }
+    if (response.data.errors) {
+      console.error('GraphQL errors:', response.data.errors);
+      break;
     }
 
-    daoMembersCount = allHolders.length;
+    const newItems = toItems(response);
+    items.push(...newItems.map(itemFn));
+
+    if (newItems.length < pageSize) {
+      break;
+    } else {
+      lastId = newItems[newItems.length - 1].id;
+    }
+    process.stdout.write(".");
+  }
+
+  return items;
+}
+
+export const updateDaoMembersCount = async () => {
+  try {
+    const holders = await queryAllPages(
+      (lastId) => `{
+        accountTokenSnapshots(
+          first: 1000,
+          where: {
+            token: "${config.tokenAddress.toLowerCase()}",
+            totalConnectedMemberships_gt: 0,
+            id_gt: "${lastId}"
+          },
+          orderBy: id,
+          orderDirection: asc
+        ) {
+          id
+        }
+      }`,
+      (res) => res.data.data.accountTokenSnapshots,
+      (item) => item.id,
+      config.sfSubgraphUrl
+    );
+
+    daoMembersCount = holders.length;
     lastHolderUpdateAt = Math.floor(Date.now() / 1000);
 
     console.log(`Updated DAO members count: ${daoMembersCount}`);
   } catch (error) {
     console.error('Error updating DAO members count:', error);
   }
-}; 
+};
 
 export const getTotalDelegatedScore = (): TotalDelegatedScoreResponse => ({
   totalDelegatedScore,
@@ -177,47 +198,32 @@ export const updateTotalDelegatedScore = async () => {
   }
 
   try {
-    const pageSize = 1000;
-    let skip = 0;
-    let allDelegations: any[] = [];
-    let hasMore = true;
-
-    while (hasMore) {
-      const query = `
-        {
-          delegations(first: ${pageSize}, skip: ${skip}, where: {
-            space: "${config.snapshotSpace}"
-          }) {
-            delegate
-          }
+    const delegates = await queryAllPages(
+      (lastId) => `{
+        delegations(
+          first: 1000,
+          where: {
+            space: "${config.snapshotSpace}",
+            id_gt: "${lastId}"
+          },
+          orderBy: id,
+          orderDirection: asc
+        ) {
+          id
+          delegate
         }
-      `;
+      }`,
+      (res) => res.data.data.delegations,
+      (item) => item.delegate,
+      `https://gateway.thegraph.com/api/${config.graphNetworkApiKey}/subgraphs/id/${config.delegationSubgraphId}`
+    );
 
-      const subgraphUrl = `https://gateway.thegraph.com/api/${config.graphNetworkApiKey}/subgraphs/id/${config.delegationSubgraphId}`;
-      const response = await axios.post(subgraphUrl, { query });
-
-      // Log any errors in the response
-      if (response.data.errors) {
-        console.error(`GraphQL error at skip=${skip}:`, response.data.errors);
-      }
-
-      const delegations = response.data?.data?.delegations || [];
-      allDelegations = allDelegations.concat(delegations);
-
-      if (delegations.length < pageSize) {
-        hasMore = false;
-      } else {
-        process.stdout.write(".");
-        skip += pageSize;
-      }
-    }
-
-    const delegateAddresses = Array.from(new Set(allDelegations.map((d: any) => d.delegate)));
-
-    console.log(`Getting voting power of ${delegateAddresses.length} unique delegates (${allDelegations.length} delegations)`);
+    const delegateAddresses = Array.from(new Set(delegates));
+    console.log(`Getting voting power of ${delegateAddresses.length} unique delegates (${delegates.length} delegations)`);
 
     let newTotalDelegatedScore = 0;
     let newDelegationScores: AddressScore[] = [];
+
     for (const address of delegateAddresses) {
       const votingPower = await getVotingPower(address);
       newTotalDelegatedScore += votingPower;
@@ -229,7 +235,6 @@ export const updateTotalDelegatedScore = async () => {
     }
 
     lastDelegatedUpdateAt = Math.floor(Date.now() / 1000);
-
     totalDelegatedScore = newTotalDelegatedScore;
     delegationScores = newDelegationScores;
 
