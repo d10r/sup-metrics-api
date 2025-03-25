@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Superfluid Delegation Table</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      margin: 0;
+      padding: 20px;
+    }
+    .delegation-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+      font-size: 14px;
+    }
+    .delegation-table th, .delegation-table td {
+      padding: 8px;
+      text-align: left;
+      border-bottom: 1px solid #ddd;
+    }
+    .delegation-table th {
+      background-color: #f2f2f2;
+      font-weight: bold;
+    }
+    .delegation-table tr:nth-child(even) {
+      background-color: #f9f9f9;
+    }
+    .delegation-table tfoot {
+      font-weight: bold;
+    }
+    .wallet-address {
+      font-family: monospace;
+    }
+    .last-updated {
+      font-size: 12px;
+      color: #666;
+      margin-top: 5px;
+    }
+    #error-message {
+      color: red;
+      padding: 20px;
+      border: 1px solid #ffcccc;
+      background: #fff8f8;
+      border-radius: 4px;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="delegation-table-container">Loading delegation data...</div>
+  <div id="error-message">Error loading delegation data. Please try again later.</div>
+
+  <script>
+    // We'll replace the static walletNames with data fetched from delegates-metadata.json
+    let delegatesMetadata = {};
+
+    // Fetch delegates metadata from JSON file
+    async function fetchDelegatesMetadata() {
+      try {
+        const response = await fetch('./delegates-metadata.json');
+        if (!response.ok) {
+          throw new Error(`HTTP error ${response.status}`);
+        }
+        
+        const data = await response.json();
+        // Store both name and ens information
+        delegatesMetadata = {};
+        Object.entries(data).forEach(([address, info]) => {
+          delegatesMetadata[address.toLowerCase()] = {
+            name: info.name,
+            ens: info.ens
+          };
+        });
+        
+        console.log('Delegates metadata loaded successfully');
+        return delegatesMetadata;
+      } catch (error) {
+        console.error('Error loading delegates metadata:', error);
+        return {};
+      }
+    }
+
+    // Format number with commas
+    function formatNumber(num) {
+      return Math.round(num).toLocaleString();
+    }
+
+    // Truncate wallet address for display
+    function truncateAddress(address) {
+      return address.substring(0, 6) + '...' + address.substring(address.length - 4);
+    }
+
+    // Fetch data and create table
+    async function createDelegationTable() {
+      try {
+        // First, load the delegates metadata
+        await fetchDelegatesMetadata();
+        
+        const response = await fetch('https://sup-metrics-api.superfluid.dev/v1/total_delegated_score', {
+          cache: 'no-store'  // Ensure fresh data
+        });
+        
+        if (!response.ok) {
+          throw new Error(`HTTP error ${response.status}`);
+        }
+        
+        const data = await response.json();
+        
+        // Sort delegates by score in descending order
+        const sortedDelegates = data.perDelegateScore.sort((a, b) => b.score - a.score);
+        
+        // Calculate total score
+        const totalScore = data.totalDelegatedScore;
+        
+        // Build table HTML
+        let tableHtml = `
+          <table class="delegation-table">
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Name</th>
+                <th>SUP</th>
+                <th>%</th>
+                <th>cumulative %</th>
+                <th>ENS</th>
+                <th>Address</th>
+              </tr>
+            </thead>
+            <tbody>
+        `;
+        
+        let cumulativePercent = 0;
+        
+        // Generate table rows
+        sortedDelegates.forEach((delegate, index) => {
+          const address = delegate.address;
+          const score = delegate.score;
+          const percent = (score / totalScore) * 100;
+          cumulativePercent += percent;
+          
+          // Get delegate metadata
+          const metadata = delegatesMetadata[address.toLowerCase()] || { name: 'Unknown', ens: null };
+          const delegateName = metadata.name;
+          
+          // Only display ENS if it contains a dot character
+          let delegateEns = metadata.ens || '';
+          if (!delegateEns.includes('.')) {
+            delegateEns = '';
+          }
+          
+          // Format percentage values
+          const percentDisplay = Math.round(percent) === 0 ? '<1%' : `${Math.round(percent)}%`;
+          const cumulativePercentDisplay = Math.round(cumulativePercent) === 100 ? '>99%' : `${Math.round(cumulativePercent)}%`;
+          
+          tableHtml += `
+            <tr>
+              <td>${index + 1}</td>
+              <td>${delegateName}</td>
+              <td>${formatNumber(score)}</td>
+              <td>${percentDisplay}</td>
+              <td>${cumulativePercentDisplay}</td>
+              <td>${delegateEns}</td>
+              <td class="wallet-address">${address}</td>
+            </tr>
+          `;
+        });
+        
+        tableHtml += `
+            </tbody>
+            <tfoot>
+              <tr>
+                <td colspan="2">Total</td>
+                <td>${formatNumber(totalScore)}</td>
+                <td>100%</td>
+                <td></td>
+                <td></td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+          <div class="last-updated">Last updated: ${new Date(data.lastUpdatedAt * 1000).toLocaleString()}</div>
+        `;
+        
+        // Update container
+        document.getElementById('delegation-table-container').innerHTML = tableHtml;
+        document.getElementById('error-message').style.display = 'none';
+      } catch (error) {
+        console.error('Error fetching delegation data:', error);
+        document.getElementById('delegation-table-container').innerHTML = '';
+        document.getElementById('error-message').style.display = 'block';
+      }
+    }
+
+    // Run when the document is ready
+    document.addEventListener('DOMContentLoaded', createDelegationTable);
+
+    // Optional: refresh every 5 minutes
+    setInterval(createDelegationTable, 5 * 60 * 1000);
+  </script>
+</body>
+</html>
