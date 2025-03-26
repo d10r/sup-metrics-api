@@ -16,10 +16,10 @@ URL_PARTS=$(echo "$AIRTABLE_URL" | cut -d '?' -f 1)
 BASE_AND_TABLE=$(echo "$URL_PARTS" | cut -d '/' -f 4-5)
 VIEW=$(echo "$URL_PARTS" | cut -d '/' -f 6)
 
-DL_URL="https://api.airtable.com/v0/${BASE_AND_TABLE}?view=${VIEW}"
+REQUEST_URL="https://api.airtable.com/v0/${BASE_AND_TABLE}?view=${VIEW}"
 
 curl -s -X GET \
-  ${DL_URL} \
+  ${REQUEST_URL} \
   -H 'Authorization: Bearer '$API_KEY \
   -H 'Content-Type: application/json' | jq > airtable.json
 
