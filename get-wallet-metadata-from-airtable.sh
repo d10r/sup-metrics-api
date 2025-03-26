@@ -26,11 +26,12 @@ curl -s -X GET \
 # mapping address: name
 #cat airtable.json | jq '{} + (.records | map({(((.fields."Wallet Address " // .fields."ENS name where entered instead of wallet address (manual)")|tostring)|ascii_downcase): .fields.Name}) | add)'
 
-# mapping address: { ens, name }
+# mapping address: { ens, name, forumThread }
 cat airtable.json | jq '{} + (.records | map({
   (((.fields."Wallet Address " // .fields."ENS name where entered instead of wallet address (manual)")|tostring)|ascii_downcase): {
     "ens": .fields."ENS name where entered instead of wallet address (manual)",
-    "name": .fields.Name
+    "name": .fields.Name,
+    "forumThread": .fields."Delegate Thread on forum.superfluid.org"
   }
 }) | add)' > delegates-metadata.json
 

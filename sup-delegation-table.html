@@ -69,12 +69,13 @@
         }
         
         const data = await response.json();
-        // Store both name and ens information
+        // Store name, ens, and forumThread information
         delegatesMetadata = {};
         Object.entries(data).forEach(([address, info]) => {
           delegatesMetadata[address.toLowerCase()] = {
             name: info.name,
-            ens: info.ens
+            ens: info.ens,
+            forumThread: info.forumThread
           };
         });
         
@@ -145,8 +146,9 @@
           cumulativePercent += percent;
           
           // Get delegate metadata
-          const metadata = delegatesMetadata[address.toLowerCase()] || { name: 'Unknown', ens: null };
+          const metadata = delegatesMetadata[address.toLowerCase()] || { name: 'Unknown', ens: null, forumThread: null };
           const delegateName = metadata.name;
+          const forumThread = metadata.forumThread;
           
           // Only display ENS if it contains a dot character
           let delegateEns = metadata.ens || '';
@@ -158,10 +160,15 @@
           const percentDisplay = Math.round(percent) === 0 ? '<1%' : `${Math.round(percent)}%`;
           const cumulativePercentDisplay = Math.round(cumulativePercent) === 100 ? '>99%' : `${Math.round(cumulativePercent)}%`;
           
+          // Format name as a link if forum thread is available
+          const nameDisplay = forumThread ? 
+            `<a href="${forumThread}" target="_blank">${delegateName}</a>` : 
+            delegateName;
+          
           tableHtml += `
             <tr>
               <td>${index + 1}</td>
-              <td>${delegateName}</td>
+              <td>${nameDisplay}</td>
               <td>${formatNumber(score)}</td>
               <td>${percentDisplay}</td>
               <td>${cumulativePercentDisplay}</td>
