@@ -63,7 +63,7 @@
     // Fetch delegates metadata from JSON file
     async function fetchDelegatesMetadata() {
       try {
-        const response = await fetch('./delegates-metadata.json');
+        const response = await fetch('./delegates-metadata.json', { cache: 'no-store' });
         if (!response.ok) {
           throw new Error(`HTTP error ${response.status}`);
         }
@@ -138,13 +138,11 @@
         
         let cumulativePercent = 0;
         
-        // Generate table rows
-        sortedDelegates.forEach((delegate, index) => {
-          const address = delegate.address;
-          const score = delegate.score;
-          const percent = (score / totalScore) * 100;
-          cumulativePercent += percent;
-          
+        // Keep track of addresses we've seen in the API response
+        const seenAddresses = new Set();
+        
+        // Helper function to create a table row for a delegate
+        function createDelegateRow(address, score, index, percent, cumulativePercent) {
           // Get delegate metadata
           const metadata = delegatesMetadata[address.toLowerCase()] || { name: 'Unknown', ens: null, forumThread: null };
           const delegateName = metadata.name;
@@ -157,15 +155,15 @@
           }
           
           // Format percentage values
-          const percentDisplay = Math.round(percent) === 0 ? '<1%' : `${Math.round(percent)}%`;
-          const cumulativePercentDisplay = Math.round(cumulativePercent) === 100 ? '>99%' : `${Math.round(cumulativePercent)}%`;
+          const percentDisplay = percent === 0 ? '0%' : (Math.round(percent) === 0 ? '<1%' : `${Math.round(percent)}%`);
+          const cumulativePercentDisplay = cumulativePercent === 100 ? '100%' : (Math.round(cumulativePercent) === 100 ? '>99%' : `${Math.round(cumulativePercent)}%`);
           
           // Format name as a link if forum thread is available
           const nameDisplay = forumThread ? 
             `<a href="${forumThread}" target="_blank">${delegateName}</a>` : 
             delegateName;
           
-          tableHtml += `
+          return `
             <tr>
               <td>${index + 1}</td>
               <td>${nameDisplay}</td>
@@ -176,7 +174,27 @@
               <td class="wallet-address">${address}</td>
             </tr>
           `;
+        }
+        
+        // Generate table rows for delegates from API
+        sortedDelegates.forEach((delegate, index) => {
+          const address = delegate.address;
+          seenAddresses.add(address.toLowerCase());
+          const score = delegate.score;
+          const percent = (score / totalScore) * 100;
+          cumulativePercent += percent;
+          
+          tableHtml += createDelegateRow(address, score, index, percent, cumulativePercent);
         });
+        
+        // Add delegates from metadata that weren't in the API response
+        let additionalIndex = sortedDelegates.length;
+        for (const [address, metadata] of Object.entries(delegatesMetadata)) {
+          if (!seenAddresses.has(address.toLowerCase())) {
+            tableHtml += createDelegateRow(address, 0, additionalIndex, 0, 100);
+            additionalIndex++;
+          }
+        }
         
         tableHtml += `
             </tbody>
