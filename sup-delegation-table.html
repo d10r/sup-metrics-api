@@ -113,11 +113,15 @@
         
         const data = await response.json();
         
-        // Sort delegates by score in descending order
-        const sortedDelegates = data.perDelegateScore.sort((a, b) => b.score - a.score);
+        // Check if we have valid data
+        const hasValidData = data && data.perDelegateScore && data.perDelegateScore.length > 0;
+        
+        // Sort delegates by score in descending order (if we have data)
+        const sortedDelegates = hasValidData ? 
+          data.perDelegateScore.sort((a, b) => b.score - a.score) : [];
         
         // Calculate total score
-        const totalScore = data.totalDelegatedScore;
+        const totalScore = hasValidData ? data.totalDelegatedScore : 0;
         
         // Build table HTML
         let tableHtml = `
@@ -142,7 +146,7 @@
         const seenAddresses = new Set();
         
         // Helper function to create a table row for a delegate
-        function createDelegateRow(address, score, index, percent, cumulativePercent) {
+        function createDelegateRow(address, score, index, percent, cumulativePercent, hasValidData) {
           // Get delegate metadata
           const metadata = delegatesMetadata[address.toLowerCase()] || { name: 'Unknown', ens: null, forumThread: null };
           const delegateName = metadata.name;
@@ -154,9 +158,18 @@
             delegateEns = '';
           }
           
-          // Format percentage values
-          const percentDisplay = percent === 0 ? '0%' : (Math.round(percent) === 0 ? '<1%' : `${Math.round(percent)}%`);
-          const cumulativePercentDisplay = cumulativePercent === 100 ? '100%' : (Math.round(cumulativePercent) === 100 ? '>99%' : `${Math.round(cumulativePercent)}%`);
+          // Format values based on whether we have valid data
+          let scoreDisplay, percentDisplay, cumulativePercentDisplay;
+          
+          if (hasValidData) {
+            scoreDisplay = formatNumber(score);
+            percentDisplay = percent === 0 ? '0%' : (Math.round(percent) === 0 ? '<1%' : `${Math.round(percent)}%`);
+            cumulativePercentDisplay = cumulativePercent === 100 ? '100%' : (Math.round(cumulativePercent) === 100 ? '>99%' : `${Math.round(cumulativePercent)}%`);
+          } else {
+            scoreDisplay = "?";
+            percentDisplay = "?";
+            cumulativePercentDisplay = "?";
+          }
           
           // Format name as a link if forum thread is available
           const nameDisplay = forumThread ? 
@@ -167,7 +180,7 @@
             <tr>
               <td>${index + 1}</td>
               <td>${nameDisplay}</td>
-              <td>${formatNumber(score)}</td>
+              <td>${scoreDisplay}</td>
               <td>${percentDisplay}</td>
               <td>${cumulativePercentDisplay}</td>
               <td>${delegateEns}</td>
@@ -176,40 +189,37 @@
           `;
         }
         
-        // Generate table rows for delegates from API
-        sortedDelegates.forEach((delegate, index) => {
-          const address = delegate.address;
-          seenAddresses.add(address.toLowerCase());
-          const score = delegate.score;
-          const percent = (score / totalScore) * 100;
-          cumulativePercent += percent;
-          
-          tableHtml += createDelegateRow(address, score, index, percent, cumulativePercent);
-        });
+        // Generate table rows for delegates from API (if we have data)
+        if (hasValidData) {
+          sortedDelegates.forEach((delegate, index) => {
+            const address = delegate.address;
+            seenAddresses.add(address.toLowerCase());
+            const score = delegate.score;
+            const percent = (score / totalScore) * 100;
+            cumulativePercent += percent;
+            
+            tableHtml += createDelegateRow(address, score, index, percent, cumulativePercent, true);
+          });
+        }
         
         // Add delegates from metadata that weren't in the API response
-        let additionalIndex = sortedDelegates.length;
+        // If we have no API data, show all delegates from metadata
+        let additionalIndex = hasValidData ? sortedDelegates.length : 0;
         for (const [address, metadata] of Object.entries(delegatesMetadata)) {
-          if (!seenAddresses.has(address.toLowerCase())) {
-            tableHtml += createDelegateRow(address, 0, additionalIndex, 0, 100);
+          if (!hasValidData || !seenAddresses.has(address.toLowerCase())) {
+            tableHtml += createDelegateRow(address, 0, additionalIndex, 0, 100, hasValidData);
             additionalIndex++;
           }
         }
+
+        // log last updated time
+        console.log('Last updated:', new Date(data.lastUpdatedAt * 1000).toISOString());
+        console.log('Last updated:', new Date(data.lastUpdatedAt * 1000).toLocaleString());
         
         tableHtml += `
             </tbody>
-            <tfoot>
-              <tr>
-                <td colspan="2">Total</td>
-                <td>${formatNumber(totalScore)}</td>
-                <td>100%</td>
-                <td></td>
-                <td></td>
-                <td></td>
-              </tr>
-            </tfoot>
           </table>
-          <div class="last-updated">Last updated: ${new Date(data.lastUpdatedAt * 1000).toLocaleString()}</div>
+          <div class="last-updated">Last updated: ${hasValidData ? new Date(data.lastUpdatedAt * 1000).toLocaleString() : "Unknown"}</div>
         `;
         
         // Update container
