@@ -4,14 +4,16 @@ import {
   getDaoMembersCount,
   getTotalDelegatedScore,
   getVotingPower,
-  getDelegateForUser
+  getDelegateForUser,
+  getTotalScore
 } from '../metrics';
 import {
   DaoMembersCountResponse,
   TotalDelegatedScoreResponse,
   UserScoreResponse,
   UserDelegateResponse,
-  ConfigResponse
+  ConfigResponse,
+  TotalScoreResponse
 } from '../types';
 import { config } from '../config';
 
@@ -86,6 +88,18 @@ export class MetricsController extends Controller {
       delegate,
       timestamp: Math.floor(Date.now() / 1000)
     };
+  }
+
+  /**
+   * Get the total score based on flow distribution.<br><br>
+   * 
+   * This calculates the total amount distributed across all pools managed by the EP Program Manager.<br>
+   * It is derived by querying the Superfluid subgraph for flow distribution events and calculating<br>
+   * the current total based on flow rates and elapsed time.
+   */
+  @Get('/total_score')
+  public async getTotalScore(): Promise<TotalScoreResponse> {
+    return getTotalScore();
   }
 
   /**

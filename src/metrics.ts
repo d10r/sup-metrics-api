@@ -5,7 +5,8 @@ import * as path from 'path';
 import {
   AddressScore,
   TotalDelegatedScoreResponse,
-  DaoMembersCountResponse
+  DaoMembersCountResponse,
+  TotalScoreResponse
 } from './types';
 
 // File paths for metric data
@@ -411,6 +412,85 @@ export const getDelegateForUser = async (address: string): Promise<string | null
       console.error(`Error fetching delegate for ${address}: ${error.response?.status} ${error.response?.statusText}`);
     } else {
       console.error(`Error fetching delegate for ${address}: ${error}`);
+    }
+    throw error;
+  }
+};
+
+/**
+ * Gets the total score calculated from flow distributions for pools managed by EP Program Manager
+ */
+export const getTotalScore = async (): Promise<TotalScoreResponse> => {
+  try {
+    const currentTimestamp = Math.floor(Date.now() / 1000);
+    console.log(`Current timestamp: ${currentTimestamp}`);
+    
+    const query = `
+      query {
+        flowDistributionUpdatedEvents(
+          where: {poolDistributor_: {account: "${config.epProgramManager.toLowerCase()}"}}
+        ) {
+          pool {
+            id
+            flowRate
+            totalAmountDistributedUntilUpdatedAt
+            updatedAtTimestamp
+          }
+        }
+      }
+    `;
+
+    const response = await axios.post(config.sfSubgraphUrl, { query });
+    const events = response.data.data.flowDistributionUpdatedEvents;
+    
+    console.log(`Found ${events.length} flow distribution events`);
+    
+    // Create a Map to store unique pools by ID
+    const uniquePools = new Map();
+    
+    // Process events and keep only the most recent event for each pool
+    for (const event of events) {
+      const pool = event.pool;
+      const poolId = pool.id;
+      
+      // If we haven't seen this pool before, or if this event is more recent than what we have, keep it
+      // (it shouldn't matter which one we pick, semantics should be that of a pointer)
+      if (!uniquePools.has(poolId) || parseInt(pool.updatedAtTimestamp) > parseInt(uniquePools.get(poolId).updatedAtTimestamp)) {
+        uniquePools.set(poolId, pool);
+      }
+    }
+    
+    let totalScore = BigInt(0);
+    
+    // Process only unique pools
+    for (const pool of uniquePools.values()) {
+      const poolId = pool.id;
+      const flowRate = BigInt(pool.flowRate);
+      const totalAmountDistributedUntilUpdatedAt = BigInt(pool.totalAmountDistributedUntilUpdatedAt);
+      const updatedAtTimestamp = parseInt(pool.updatedAtTimestamp);
+      
+      const timeElapsed = currentTimestamp - updatedAtTimestamp;
+      const additionalAmount = flowRate * BigInt(timeElapsed);
+      const totalAmountDistributed = totalAmountDistributedUntilUpdatedAt + additionalAmount;
+      
+      totalScore += totalAmountDistributed;
+    }
+    
+    console.log(`Total Score: ${totalScore.toString()}`);
+    
+    // Convert BigInt to Number for JSON serialization
+    // Dividing by 10^18 to get a more manageable number (assuming 18 decimals)
+    const totalScoreNormalized = Number(totalScore / BigInt(10 ** 18));
+    
+    return {
+      totalScore: totalScoreNormalized,
+      lastUpdatedAt: currentTimestamp
+    };
+  } catch (error) {
+    if (axios.isAxiosError(error)) {
+      console.error(`Error fetching total score: ${error.response?.status} ${error.response?.statusText}`);
+    } else {
+      console.error(`Error fetching total score: ${error}`);
     }
     throw error;
   }

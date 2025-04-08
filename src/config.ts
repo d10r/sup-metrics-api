@@ -6,6 +6,7 @@ export const config = {
   tokenAddress: process.env.TOKEN_ADDRESS || '',
   lockerFactoryAddress: process.env.LOCKER_FACTORY_ADDRESS || '',
   rpcNodeUrl: process.env.RPC_NODE_URL || '',
+  epProgramManager: process.env.EP_PROGRAM_MANAGER || '',
   graphNetworkApiKey: process.env.GRAPH_NETWORK_API_KEY || '',
   sfSubgraphUrl: process.env.SF_SUBGRAPH_URL || '',
   delegationSubgraphId: process.env.DELEGATION_SUBGRAPH_ID || '',

@@ -62,4 +62,14 @@ export interface ConfigResponse {
   snapshotSpace: string;
   /** URL for Snapshot Hub */
   snapshotHubUrl: string;
+}
+
+/**
+ * Response for total score endpoint
+ */
+export interface TotalScoreResponse {
+  /** Total score calculated from flow distributions */
+  totalScore: number;
+  /** Unix timestamp of the query */
+  lastUpdatedAt: number;
 } 
