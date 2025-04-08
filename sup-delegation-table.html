@@ -103,25 +103,39 @@
         // First, load the delegates metadata
         await fetchDelegatesMetadata();
         
-        const response = await fetch('https://sup-metrics-api.superfluid.dev/v1/total_delegated_score', {
+        // Fetch total delegated score
+        const delegatedScoreResponse = await fetch('https://sup-metrics-api.superfluid.dev/v1/total_delegated_score', {
           cache: 'no-store'  // Ensure fresh data
         });
         
-        if (!response.ok) {
-          throw new Error(`HTTP error ${response.status}`);
+        if (!delegatedScoreResponse.ok) {
+          throw new Error(`HTTP error ${delegatedScoreResponse.status}`);
         }
         
-        const data = await response.json();
+        const delegatedData = await delegatedScoreResponse.json();
+        
+        // Fetch total score from new endpoint
+        const totalScoreResponse = await fetch('https://sup-metrics-api.superfluid.dev/v1/total_score', {
+          cache: 'no-store'  // Ensure fresh data
+        });
+        
+        if (!totalScoreResponse.ok) {
+          throw new Error(`HTTP error ${totalScoreResponse.status}`);
+        }
+        
+        const totalScoreData = await totalScoreResponse.json();
         
         // Check if we have valid data
-        const hasValidData = data && data.perDelegateScore && data.perDelegateScore.length > 0;
+        const hasValidData = delegatedData && delegatedData.perDelegateScore && delegatedData.perDelegateScore.length > 0;
         
         // Sort delegates by score in descending order (if we have data)
         const sortedDelegates = hasValidData ? 
-          data.perDelegateScore.sort((a, b) => b.score - a.score) : [];
+          delegatedData.perDelegateScore.sort((a, b) => b.score - a.score) : [];
         
-        // Calculate total score
-        const totalScore = hasValidData ? data.totalDelegatedScore : 0;
+        // Get total delegated score and total score
+        const totalDelegatedScore = hasValidData ? delegatedData.totalDelegatedScore : 0;
+        const totalScore = totalScoreData ? totalScoreData.totalScore : 0;
+        const notDelegatedScore = totalScore - totalDelegatedScore;
         
         // Build table HTML
         let tableHtml = `
@@ -129,8 +143,8 @@
             <thead>
               <tr>
                 <th>#</th>
-                <th>Name</th>
-                <th>SUP</th>
+                <th>Delegate Name</th>
+                <th>votable SUP tokens</th>
                 <th>%</th>
                 <th>cumulative %</th>
                 <th>ENS</th>
@@ -195,6 +209,7 @@
             const address = delegate.address;
             seenAddresses.add(address.toLowerCase());
             const score = delegate.score;
+            // Calculate percentage based on total score instead of delegated score
             const percent = (score / totalScore) * 100;
             cumulativePercent += percent;
             
@@ -207,19 +222,36 @@
         let additionalIndex = hasValidData ? sortedDelegates.length : 0;
         for (const [address, metadata] of Object.entries(delegatesMetadata)) {
           if (!hasValidData || !seenAddresses.has(address.toLowerCase())) {
-            tableHtml += createDelegateRow(address, 0, additionalIndex, 0, 100, hasValidData);
+            tableHtml += createDelegateRow(address, 0, additionalIndex, 0, cumulativePercent, hasValidData);
             additionalIndex++;
           }
         }
 
+        // Add the "<Not Delegated>" row
+        if (hasValidData && totalScore > 0) {
+          const notDelegatedPercent = (notDelegatedScore / totalScore) * 100;
+          
+          tableHtml += `
+            <tr>
+              <td>${additionalIndex + 1}</td>
+              <td>&lt;Not Delegated&gt;</td>
+              <td>${formatNumber(notDelegatedScore)}</td>
+              <td>${notDelegatedPercent === 0 ? '0%' : (Math.round(notDelegatedPercent) === 0 ? '<1%' : `${Math.round(notDelegatedPercent)}%`)}</td>
+              <td>100%</td>
+              <td></td>
+              <td></td>
+            </tr>
+          `;
+        }
+
         // log last updated time
-        console.log('Last updated:', new Date(data.lastUpdatedAt * 1000).toISOString());
-        console.log('Last updated:', new Date(data.lastUpdatedAt * 1000).toLocaleString());
+        console.log('Last updated:', new Date(delegatedData.lastUpdatedAt * 1000).toISOString());
+        console.log('Last updated:', new Date(delegatedData.lastUpdatedAt * 1000).toLocaleString());
         
         tableHtml += `
             </tbody>
           </table>
-          <div class="last-updated">Last updated: ${hasValidData ? new Date(data.lastUpdatedAt * 1000).toLocaleString() : "Unknown"}</div>
+          <div class="last-updated">Last updated: ${hasValidData ? new Date(delegatedData.lastUpdatedAt * 1000).toLocaleString() : "Unknown"}</div>
         `;
         
         // Update container
