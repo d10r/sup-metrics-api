@@ -1,11 +1,11 @@
 {
-  "name": "erc20-metrics-api",
+  "name": "sup-metrics-api",
   "version": "1.0.0",
-  "description": "API providing real-time metrics for an ERC20 token on Base mainnet.",
+  "description": "API providing real-time metrics for the SUP token.",
   "main": "dist/index.js",
   "repository": {
     "type": "git",
-    "url": "https://github.com/d10r/token-metrics-api/"
+    "url": "https://github.com/d10r/sup-metrics-api/"
   },
   "scripts": {
     "start": "node dist/index.js",
