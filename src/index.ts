@@ -2,7 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
 import { config } from './config';
-import { updateDaoMembersCount, updateTotalDelegatedScore } from './metrics';
+import { setupMetricsUpdates } from './metrics';
 import { RegisterRoutes } from './routes';
 
 const app = express();
@@ -37,39 +37,9 @@ app.use(function errorHandler(err: any, req: express.Request, res: express.Respo
   return res.status(500).json({ error: 'Internal server error' });
 });
 
-const createPeriodicTask = (
-  name: string,
-  task: () => Promise<void>,
-  intervalMs: number
-) => {
-  const runTask = async () => {
-    try {
-      await task();
-    } catch (error) {
-      console.error(`Error during ${name}:`, error);
-    } finally {
-      setTimeout(runTask, intervalMs);
-    }
-  };
-  return runTask;
-};
-
 app.listen(config.port, () => {
   console.log(`Server running on port ${config.port}`);
   
-  // Start holder count updates
-  const updateDaoMembersCountTask = createPeriodicTask(
-    'Update DAO Members Count',
-    updateDaoMembersCount,
-    config.daoMembersCountUpdateInterval * 1000
-  );
-  updateDaoMembersCountTask();
-  
-  // Start delegated amount updates
-  const updateTotalDelegatedScoreTask = createPeriodicTask(
-    'Update Total Delegated Score',
-    updateTotalDelegatedScore,
-    config.totalDelegatedScoreUpdateInterval * 1000
-  );
-  updateTotalDelegatedScoreTask();
+  // Setup all metrics updates with a single call
+  setupMetricsUpdates();
 }); 
