@@ -21,9 +21,8 @@ export class MetricsController extends Controller {
   /**
    * Get the number of DAO members.<br><br>
    * 
-   * This is currently calculated by looking at token Transfer events and counting the unique receivers.<br>
-   * Note that this is not a precise method. We do currently not try to distinguish between accounts which can vote
-   * and accounts which can't.<br>
+   * This is currently calculated by counting the accounts connected to a pool.<br>
+   * That's quite accurate because SUP distribution is currently taking place through distributions to lockers.<br>
    * This is close enough to reality as long as the token isn't transferrable.<br><br>
    * 
    * This metrics is periodically updated in the background. The last update timestamp is returned.
