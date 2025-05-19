@@ -195,7 +195,7 @@ async function fetchTotalDelegatedScore(): Promise<{
     await loadSpaceConfig();
   }
 
-  const delegates = await queryAllPages(
+  const delegations = await queryAllPages(
     (lastId) => `{
       delegations(
         first: 1000,
@@ -217,8 +217,16 @@ async function fetchTotalDelegatedScore(): Promise<{
 
   console.log(`subgraph url: https://gateway.thegraph.com/api/${config.graphNetworkApiKey}/subgraphs/id/${config.delegationSubgraphId}`);
 
-  const delegateAddresses = Array.from(new Set(delegates));
-  console.log(`Getting voting power of ${delegateAddresses.length} unique delegates (${delegates.length} delegations)`);
+  // Count occurrences of each delegate
+  const delegateCounts = delegations.reduce((counts: Record<string, number>, delegate: string) => {
+    counts[delegate] = (counts[delegate] || 0) + 1;
+    return counts;
+  }, {});
+  console.log(`delegate counts: ${JSON.stringify(delegateCounts, null, 2)}`);
+
+  // Get unique delegate addresses
+  const delegateAddresses = Object.keys(delegateCounts);
+  console.log(`Getting voting power of ${delegateAddresses.length} unique delegates (${delegations.length} delegations)`);
 
   let totalScore = 0;
   const perDelegateScore: AddressScore[] = [];
@@ -229,7 +237,8 @@ async function fetchTotalDelegatedScore(): Promise<{
     perDelegateScore.push({
       address,
       score: votingPower.total,
-      delegatedScore: votingPower.delegated
+      delegatedScore: votingPower.delegated,
+      nrDelegations: delegateCounts[address]
     });
     process.stdout.write(".");
   }

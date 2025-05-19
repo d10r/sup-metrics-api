@@ -18,6 +18,8 @@ export interface AddressScore {
   score: number;
   /** The user's delegated score (less than or equal to the total score) */
   delegatedScore: number;
+  /** The number of delegations to this address */
+  nrDelegations: number;
 }
 
 /**
