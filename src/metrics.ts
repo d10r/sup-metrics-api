@@ -241,6 +241,8 @@ async function fetchTotalDelegatedScore(): Promise<{
       nrDelegations: delegateCounts[address]
     });
     process.stdout.write(".");
+    // throttle requests to the scores API
+    await new Promise(resolve => setTimeout(resolve, 5000));
   }
 
   console.log(`Total delegated score: ${totalScore}`);
