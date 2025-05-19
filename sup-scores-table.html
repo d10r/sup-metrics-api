@@ -101,7 +101,7 @@
     }
 
     // Fetch data and create table
-    async function createDelegationTable() {
+    async function createTable() {
       try {
         // First, load the delegates metadata
         await fetchDelegatesMetadata();
@@ -168,7 +168,7 @@
         const seenAddresses = new Set();
         
         // Helper function to create a table row for a delegate
-        function createDelegateRow(address, delegateData, index, percent, cumulativePercent, hasValidData) {
+        function createRow(address, delegateData, index, percent, cumulativePercent, hasValidData) {
           // Get delegate metadata
           const metadata = delegatesMetadata[address.toLowerCase()] || { name: 'Unknown', ens: null, forumThread: null };
           const delegateName = metadata.name;
@@ -228,7 +228,7 @@
             const percent = (score / totalScore) * 100;
             cumulativePercent += percent;
             
-            tableHtml += createDelegateRow(address, {
+            tableHtml += createRow(address, {
               totalScore: score,
               delegatedScore: delegate.delegatedScore,
               ownScore: score - delegate.delegatedScore,
@@ -243,7 +243,13 @@
         let additionalIndex = hasValidData ? sortedDelegates.length : 0;
         for (const [address, metadata] of Object.entries(delegatesMetadata)) {
           if (!hasValidData || !seenAddresses.has(address.toLowerCase())) {
-            tableHtml += createDelegateRow(address, 0, additionalIndex, 0, cumulativePercent, hasValidData);
+            tableHtml += createRow(address, {
+              totalScore: 0,
+              delegatedScore: 0,
+              ownScore: 0,
+              nrDelegations: 0,
+            },
+            additionalIndex, 0, cumulativePercent, hasValidData);
             additionalIndex++;
           }
         }
@@ -290,10 +296,10 @@
     }
 
     // Run when the document is ready
-    document.addEventListener('DOMContentLoaded', createDelegationTable);
+    document.addEventListener('DOMContentLoaded', createTable);
 
     // Optional: refresh every 5 minutes
-    setInterval(createDelegationTable, 5 * 60 * 1000);
+    setInterval(createTable, 5 * 60 * 1000);
   </script>
 </body>
 </html>
