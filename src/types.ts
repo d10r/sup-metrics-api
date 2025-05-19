@@ -16,6 +16,8 @@ export interface AddressScore {
   address: string;
   /** A score */
   score: number;
+  /** The user's delegated score (less than or equal to the total score) */
+  delegatedScore: number;
 }
 
 /**
@@ -34,8 +36,10 @@ export interface TotalDelegatedScoreResponse {
  * Response for user score endpoint
  */
 export interface UserScoreResponse {
-  /** User's snapshot score */
+  /** User's total snapshot score */
   score: number;
+  /** User's delegated score (less than or equal to the total score) */
+  delegatedScore: number;
   /** Unix timestamp of the query */
   timestamp: number;
 }
@@ -72,4 +76,9 @@ export interface TotalScoreResponse {
   totalScore: number;
   /** Unix timestamp of the query */
   lastUpdatedAt: number;
+}
+
+export interface VotingPower {
+  total: number;
+  delegated: number;
 } 

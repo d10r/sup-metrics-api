@@ -63,9 +63,10 @@ export class MetricsController extends Controller {
     if (!isAddress(address)) {
       throw new Error('Invalid Ethereum address');
     }
-    const score = await getVotingPower(address.toLowerCase());
+    const votingPower = await getVotingPower(address.toLowerCase());
     return {
-      score,
+      score: votingPower.total,
+      delegatedScore: votingPower.delegated,
       timestamp: Math.floor(Date.now() / 1000)
     };
   }

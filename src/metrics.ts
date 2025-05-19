@@ -6,11 +6,13 @@ import {
   AddressScore,
   TotalDelegatedScoreResponse,
   DaoMembersCountResponse,
-  TotalScoreResponse
+  TotalScoreResponse,
+  VotingPower
 } from './types';
 
 // File paths for metric data
 const DATA_DIR = './data';
+const FILE_SCHEMA_VERSION = 2;
 
 // Generic metric data structure
 interface MetricState<T> {
@@ -60,7 +62,10 @@ class MetricManager<T> {
     try {
       fs.writeFileSync(
         this.state.filePath,
-        JSON.stringify(this.getData(), null, 2)
+        JSON.stringify({
+          schemaVersion: FILE_SCHEMA_VERSION,
+          ...this.getData()
+        }, null, 2)
       );
     } catch (error) {
       console.error(`Error saving to ${this.state.filePath}:`, error);
@@ -72,6 +77,10 @@ class MetricManager<T> {
     try {
       if (fs.existsSync(this.state.filePath)) {
         const fileData = JSON.parse(fs.readFileSync(this.state.filePath, 'utf8'));
+        if (fileData.schemaVersion !== FILE_SCHEMA_VERSION) {
+          console.warn(`File schema version mismatch: ${fileData.schemaVersion} (expected ${FILE_SCHEMA_VERSION})`);
+          return false;
+        }
         this.state.data = fileData.data;
         this.state.lastUpdatedAt = fileData.lastUpdatedAt;
         return true;
@@ -206,6 +215,8 @@ async function fetchTotalDelegatedScore(): Promise<{
     `https://gateway.thegraph.com/api/${config.graphNetworkApiKey}/subgraphs/id/${config.delegationSubgraphId}`
   );
 
+  console.log(`subgraph url: https://gateway.thegraph.com/api/${config.graphNetworkApiKey}/subgraphs/id/${config.delegationSubgraphId}`);
+
   const delegateAddresses = Array.from(new Set(delegates));
   console.log(`Getting voting power of ${delegateAddresses.length} unique delegates (${delegates.length} delegations)`);
 
@@ -214,10 +225,11 @@ async function fetchTotalDelegatedScore(): Promise<{
 
   for (const address of delegateAddresses) {
     const votingPower = await getVotingPower(address);
-    totalScore += votingPower;
+    totalScore += votingPower.total;
     perDelegateScore.push({
       address,
-      score: votingPower
+      score: votingPower.total,
+      delegatedScore: votingPower.delegated
     });
     process.stdout.write(".");
   }
@@ -356,7 +368,7 @@ export const loadSpaceConfig = async () => {
   }
 };
 
-export const getVotingPower = async (address: string): Promise<number> => {
+export const getVotingPower = async (address: string): Promise<VotingPower> => {
   if (!spaceConfig) {
     await loadSpaceConfig();
   }
@@ -376,9 +388,20 @@ export const getVotingPower = async (address: string): Promise<number> => {
 
     const response = await axios.post(config.snapshotScoreUrl, scoreApiPayload);
     if (response.data?.result?.vp) {
-      return response.data.result.vp;
+      const totalVp = response.data.result.vp;
+      const delegatedVp = response.data.result.vp_by_strategy[0];
+      const ownVp = response.data.result.vp_by_strategy[1];
+      console.log(`Voting power for ${address}: ${totalVp} (delegated: ${delegatedVp}, own: ${ownVp})`);
+      console.log(`Voting power raw for ${address}: ${JSON.stringify(response.data.result, null, 2)}`);
+      return {
+        total: totalVp,
+        delegated: delegatedVp
+      };
     }
-    return 0;
+    return {
+      total: 0,
+      delegated: 0
+    };
   } catch (error) {
     if (axios.isAxiosError(error)) {
       console.error(`Error fetching voting power for ${address}: ${error.response?.status} ${error.response?.statusText}`);
