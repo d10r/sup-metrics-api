@@ -12,6 +12,7 @@ import {
   VotingPower,
   Holder
 } from './types'; 
+import snapshot from '@snapshot-labs/snapshot.js';
 
 // File paths for metric data
 const DATA_DIR = './data';
@@ -349,6 +350,7 @@ async function queryAllPages<T>(
 }
 
 export const loadSpaceConfig = async () => {
+  console.log("Loading space config");
   try {
     // Fetch space configuration
     const query = `
@@ -381,29 +383,9 @@ export const loadSpaceConfig = async () => {
       throw new Error(`Space ${config.snapshotSpace} not found`);
     }
 
-    // Use hardcoded strategy with provided delegates
-    const fountainHeadStrategy = {
-      name: "fountainhead",
-      params: {
-        tokenAddress: config.tokenAddress.toLowerCase(),
-        lockerFactoryAddress: config.lockerFactoryAddress.toLowerCase()
-      }
-    };
-
     spaceConfig = {
       network: space.network,
-      strategies: [
-        {
-          name: 'delegation',
-          params: {
-            symbol: 'SUP (delegated)',
-            strategies: [
-              fountainHeadStrategy
-            ]
-          }
-        },
-        fountainHeadStrategy
-      ]
+      strategies: space.strategies
     };
 
     console.log(`** Loaded space config for ${config.snapshotSpace}: ${JSON.stringify(spaceConfig, null, 2)}`);
@@ -454,6 +436,44 @@ export const getVotingPower = async (address: string): Promise<VotingPower> => {
       console.error(`Error fetching voting power for ${address}: ${error}`);
     }
     throw error;
+  }
+};
+
+/**
+ * Gets the voting power for a specific account using snapshot.js
+ * @param accountAddress The address to get voting power for
+ * @param useOwnStrategies If true, uses only the first strategy without delegation
+ * @returns The voting power as a number
+ */
+export const getAccountVotingPower = async (accountAddress: string, useOwnStrategies: boolean = false): Promise<number> => {
+  if (!spaceConfig) {
+    await loadSpaceConfig();
+  }
+  
+  try {
+    // Set up snapshot options
+    const options = {
+      url: config.snapshotScoreUrl
+    };
+    
+    // Define strategies - either use all strategies or just the first one without delegation
+    const strategies = useOwnStrategies ? [spaceConfig!.strategies[0]] : spaceConfig!.strategies;
+    
+    // Get voting power for the account address
+    const vp = await snapshot.utils.getVp(
+      accountAddress,
+      spaceConfig!.network,
+      strategies,
+      'latest', // Use latest snapshot
+      config.snapshotSpace,
+      false, // No delegation
+      options
+    );
+    
+    return vp.vp || 0; // Return voting power or 0 if undefined
+  } catch (error) {
+    console.error(`Error fetching voting power for ${accountAddress}:`, error);
+    return 0; // Return 0 on error
   }
 };
 
@@ -567,6 +587,10 @@ export const getTotalScore = async (): Promise<TotalScoreResponse> => {
 };
 
 export const getMemberScores = async (): Promise<Holder[]> => {
+  if (!spaceConfig) {
+    await loadSpaceConfig();
+  }
+
   try {
     const currentTimestamp = Math.floor(Date.now() / 1000);
     console.log(`Current timestamp: ${currentTimestamp}`);
@@ -587,8 +611,7 @@ export const getMemberScores = async (): Promise<Holder[]> => {
     const events = response.data.data.flowDistributionUpdatedEvents;
     
     console.log(`Found ${events.length} flow distribution events`);
-    // log full detail
-    console.log(JSON.stringify(response.data.data, null, 2));
+    //console.log(JSON.stringify(response.data.data, null, 2));
     
     // Create a Map to store unique pools by ID
     const uniquePools = new Set();
@@ -607,7 +630,7 @@ export const getMemberScores = async (): Promise<Holder[]> => {
     // Query members for each unique pool with pagination
     console.log("Fetching pool members for each unique pool...");
     for (const poolId of uniquePools) {
-      if (poolMemberCnt > 1000) {
+      if (poolMemberCnt > 500) {
         break; // TODO: remove this once we have a better way to handle this
       }
       try {
@@ -718,13 +741,65 @@ export const getMemberScores = async (): Promise<Holder[]> => {
     console.log(JSON.stringify(uniqueLockerOwnersArray.slice(0, 5), null, 2) + 
                 (uniqueLockerOwnersArray.length > 5 ? "... (truncated)" : ""));
     
-    // Return an array of Holder objects with address and amount
-    const holders: Holder[] = uniqueLockerOwnersArray.map(address => ({
-      address,
-      amount: 0 // Initial amount, might calculate actual amounts later
-    }));
+    // Now get voting power for each unique locker owner
+    console.log('\nFetching voting power for each unique locker owner...');
     
-    return holders;
+    // Array to hold holders with their voting power
+    const holdersWithVP: Holder[] = [];
+    let vpSuccessCount = 0;
+    let vpFailedCount = 0;
+    let processedVPCount = 0;
+    
+    // Process locker owners to get voting power - do this sequentially to avoid rate limiting
+    for (const ownerAddress of uniqueLockerOwnersArray) {
+      try {
+        // Get voting power using the extracted function
+        const votingPower = await getAccountVotingPower(ownerAddress, true);
+        
+        // Add to holders array with voting power as amount
+        holdersWithVP.push({
+          address: ownerAddress,
+          amount: votingPower
+        });
+        
+        vpSuccessCount++;
+        
+        // Log progress
+        processedVPCount++;
+        if (processedVPCount % 10 === 0) {
+          process.stdout.write('.');
+        }
+        
+        // Add a small delay to avoid rate limiting
+        await new Promise(resolve => setTimeout(resolve, 100));
+
+        if (processedVPCount > 50) {
+          break; // TODO: remove this once we have a better way to handle this
+        }
+      } catch (error) {
+        console.error(`Error in voting power processing for ${ownerAddress}:`, error);
+        // Still add the address, but with 0 voting power
+        holdersWithVP.push({
+          address: ownerAddress,
+          amount: 0
+        });
+        
+        vpFailedCount++;
+        break; // TODO: remove this
+      }
+    }
+    
+    console.log(`\nProcessed ${uniqueLockerOwnersArray.length} owners: ${vpSuccessCount} successful, ${vpFailedCount} failed`);
+    
+    // Sort holders by amount (voting power) in descending order
+    holdersWithVP.sort((a, b) => b.amount - a.amount);
+    
+    // Log the top holders
+    console.log('\nTop 5 holders by voting power:');
+    console.log(JSON.stringify(holdersWithVP.slice(0, 5), null, 2));
+    
+    // Return the holders with voting power
+    return holdersWithVP;
 
   } catch (error) {
     console.error(`Error fetching member scores: ${error}`);
