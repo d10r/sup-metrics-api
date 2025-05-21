@@ -5,7 +5,8 @@ import {
   getTotalDelegatedScore,
   getVotingPower,
   getDelegateForUser,
-  getTotalScore
+  getTotalScore,
+  getMemberScores
 } from '../metrics';
 import {
   DaoMembersCountResponse,
@@ -13,7 +14,8 @@ import {
   UserScoreResponse,
   UserDelegateResponse,
   ConfigResponse,
-  TotalScoreResponse
+  TotalScoreResponse,
+  Holder
 } from '../types';
 import { config } from '../config';
 
@@ -101,6 +103,11 @@ export class MetricsController extends Controller {
   @Get('/total_score')
   public async getTotalScore(): Promise<TotalScoreResponse> {
     return getTotalScore();
+  }
+
+  @Get('/member_scores')
+  public async getMemberScores(): Promise<Holder[]> {
+    return getMemberScores();
   }
 
   /**

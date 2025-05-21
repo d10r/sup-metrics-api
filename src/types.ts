@@ -70,6 +70,11 @@ export interface ConfigResponse {
   snapshotHubUrl: string;
 }
 
+export interface Holder {
+  address: string;
+  amount: number;
+}
+
 /**
  * Response for total score endpoint
  */
@@ -78,6 +83,8 @@ export interface TotalScoreResponse {
   totalScore: number;
   /** Unix timestamp of the query */
   lastUpdatedAt: number;
+  /** Top holders with their amount */
+  //topHolders: Holder[];
 }
 
 export interface VotingPower {

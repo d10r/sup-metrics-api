@@ -2,17 +2,40 @@ import axios from 'axios';
 import { config } from './config';
 import * as fs from 'fs';
 import * as path from 'path';
+import { createPublicClient, http, getContract, Address, Abi } from 'viem';
+import { base } from 'viem/chains'
 import {
   AddressScore,
   TotalDelegatedScoreResponse,
   DaoMembersCountResponse,
   TotalScoreResponse,
-  VotingPower
-} from './types';
+  VotingPower,
+  Holder
+} from './types'; 
 
 // File paths for metric data
 const DATA_DIR = './data';
 const FILE_SCHEMA_VERSION = 2;
+
+// Setup viem client with batching support
+const viemClient = createPublicClient({
+  chain: base,
+  transport: http(config.rpcUrl),
+  batch: {
+    multicall: true
+  }
+});
+
+// ABI for the lockerOwner method
+const LOCKER_ABI = [
+  {
+    inputs: [],
+    name: 'lockerOwner',
+    outputs: [{ type: 'address' }],
+    stateMutability: 'view',
+    type: 'function'
+  }
+] as const;
 
 // Generic metric data structure
 interface MetricState<T> {
@@ -122,7 +145,9 @@ class MetricManager<T> {
   // Setup periodic updates
   setupPeriodicUpdates(): () => void {
     // First run with bootstrapping
-    this.update(true);
+    if (!process.env.SKIP_INITIAL_UPDATE) {
+      this.update(true);
+    }
 
     // Setup interval for future updates
     const intervalId = setInterval(() => {
@@ -270,6 +295,15 @@ export const getTotalDelegatedScore = (): TotalDelegatedScoreResponse => {
 // Setup methods for startup
 export const setupMetricsUpdates = (): () => void => {
   console.log("Setting up metrics updates");
+  
+  // test viem client connection
+  viemClient.getBlockNumber().then(blockNumber => {
+    console.log(`Connected to blockchain at ${config.rpcUrl}. Current block number: ${blockNumber}`);
+  }).catch(error => {
+    console.error('Failed to connect to blockchain:', error);
+    throw error;
+  });
+  
   const stopDaoUpdates = daoMembersManager.setupPeriodicUpdates();
   const stopDelegatedUpdates = delegatedScoreManager.setupPeriodicUpdates();
   
@@ -478,6 +512,8 @@ export const getTotalScore = async (): Promise<TotalScoreResponse> => {
     const events = response.data.data.flowDistributionUpdatedEvents;
     
     console.log(`Found ${events.length} flow distribution events`);
+    // log full detail
+    console.log(JSON.stringify(response.data.data, null, 2));
     
     // Create a Map to store unique pools by ID
     const uniquePools = new Map();
@@ -526,6 +562,172 @@ export const getTotalScore = async (): Promise<TotalScoreResponse> => {
     } else {
       console.error(`Error fetching total score: ${error}`);
     }
+    throw error;
+  }
+};
+
+export const getMemberScores = async (): Promise<Holder[]> => {
+  try {
+    const currentTimestamp = Math.floor(Date.now() / 1000);
+    console.log(`Current timestamp: ${currentTimestamp}`);
+    
+    const query = `
+      query {
+        flowDistributionUpdatedEvents(
+          where: {poolDistributor_: {account: "${config.epProgramManager.toLowerCase()}"}}
+        ) {
+          pool {
+            id
+          }
+        }
+      }
+    `;
+
+    const response = await axios.post(config.sfSubgraphUrl, { query });
+    const events = response.data.data.flowDistributionUpdatedEvents;
+    
+    console.log(`Found ${events.length} flow distribution events`);
+    // log full detail
+    console.log(JSON.stringify(response.data.data, null, 2));
+    
+    // Create a Map to store unique pools by ID
+    const uniquePools = new Set();
+    
+    // Process events and store unique pool IDs
+    for (const event of events) {
+      uniquePools.add(event.pool.id);
+    }
+    
+    console.log(`Found ${uniquePools.size} unique pools: ${JSON.stringify(Array.from(uniquePools), null, 2)}`);
+    
+    // Create a Set to store unique account addresses
+    const uniquePoolMembers = new Set<string>();
+    
+    let poolMemberCnt = 0;
+    // Query members for each unique pool with pagination
+    console.log("Fetching pool members for each unique pool...");
+    for (const poolId of uniquePools) {
+      if (poolMemberCnt > 1000) {
+        break; // TODO: remove this once we have a better way to handle this
+      }
+      try {
+        console.log(`Fetching members for pool ${poolId}`);
+        
+        // Now use queryAllPages with the correct return value handling
+        const poolMembers = await queryAllPages(
+          (lastId) => `{
+            poolMembers(
+              first: 1000,
+              where: {
+                pool: "${poolId}",
+                id_gt: "${lastId}"
+              },
+              orderBy: id,
+              orderDirection: asc
+            ) {
+              id
+              account {
+                id
+              }
+            }
+          }`,
+          (res) => res.data.data.poolMembers,
+          (item) => {
+            // Return account ID directly instead of the item ID
+            return item.account.id;
+          },
+          config.sfSubgraphUrl
+        );
+        
+        console.log(`Found ${poolMembers.length} members in pool ${poolId}`);
+        poolMemberCnt += poolMembers.length;
+        
+        // Add each account ID directly to the set since poolMembers is now an array of account IDs
+        for (const accountId of poolMembers) {
+          if (accountId) {
+            uniquePoolMembers.add(accountId);
+          } else {
+            console.warn('Invalid account ID:', accountId);
+          }
+        }
+      } catch (error) {
+        console.error(`Error fetching members for pool ${poolId}:`, error);
+        // Continue with the next pool even if there's an error
+      }
+    }
+
+    console.log(`Found ${poolMemberCnt} pool memberships in all pools`);
+    console.log(`Found ${uniquePoolMembers.size} unique accounts across all pools`);
+  
+    // Convert Set to array for logging
+    const uniqueAccountsArray = Array.from(uniquePoolMembers);
+    console.log(JSON.stringify(uniqueAccountsArray.slice(0, 5), null, 2) + 
+                (uniqueAccountsArray.length > 5 ? "... (truncated)" : ""));
+
+    // Now we get the lockerOwner for each unique account
+    console.log('Fetching locker owners for each unique account...');
+    
+    const uniqueLockerOwners = new Set<string>();
+    let successCount = 0;
+    let failedCount = 0;
+    
+    try {
+      // Prepare all contract calls at once - viem will handle batching internally
+      const contractCalls = uniqueAccountsArray.map(accountAddress => ({
+        address: accountAddress as Address,
+        abi: LOCKER_ABI,
+        functionName: 'lockerOwner',
+        args: []
+      }));
+      
+      console.log(`Making ${contractCalls.length} contract calls...`);
+      
+      // Let viem handle the batching and execute all calls
+      const results = await viemClient.multicall({
+        contracts: contractCalls as any[] // Type assertion to avoid TypeScript issues
+      });
+      
+      // Log progress indicator for every 1000 calls
+      for (let i = 0; i < results.length; i++) {
+        if ((i + 1) % 1000 === 0) {
+          process.stdout.write('.');
+        }
+        
+        const result = results[i];
+        if (result.status === 'success' && result.result) {
+          const owner = result.result as Address;
+          if (owner && owner !== '0x0000000000000000000000000000000000000000') {
+            uniqueLockerOwners.add(owner.toLowerCase());
+            successCount++;
+          }
+        } else {
+          failedCount++;
+        }
+      }
+      
+    } catch (error) {
+      console.error(`Error fetching locker owners:`, error);
+      failedCount = uniqueAccountsArray.length - successCount;
+    }
+    
+    console.log(`\nProcessed ${uniqueAccountsArray.length} accounts: ${successCount} successful, ${failedCount} failed`);
+    console.log(`Found ${uniqueLockerOwners.size} unique locker owners`);
+    
+    // Convert uniqueLockerOwners to array for logging
+    const uniqueLockerOwnersArray = Array.from(uniqueLockerOwners);
+    console.log(JSON.stringify(uniqueLockerOwnersArray.slice(0, 5), null, 2) + 
+                (uniqueLockerOwnersArray.length > 5 ? "... (truncated)" : ""));
+    
+    // Return an array of Holder objects with address and amount
+    const holders: Holder[] = uniqueLockerOwnersArray.map(address => ({
+      address,
+      amount: 0 // Initial amount, might calculate actual amounts later
+    }));
+    
+    return holders;
+
+  } catch (error) {
+    console.error(`Error fetching member scores: ${error}`);
     throw error;
   }
 };

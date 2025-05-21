@@ -37,9 +37,9 @@ app.use(function errorHandler(err: any, req: express.Request, res: express.Respo
   return res.status(500).json({ error: 'Internal server error' });
 });
 
+// Setup all metrics updates with a single call
+setupMetricsUpdates();
+
 app.listen(config.port, () => {
   console.log(`Server running on port ${config.port}`);
-  
-  // Setup all metrics updates with a single call
-  setupMetricsUpdates();
-}); 
+});
