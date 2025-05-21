@@ -2,7 +2,7 @@ import axios from 'axios';
 import { config } from './config';
 import * as fs from 'fs';
 import * as path from 'path';
-import { createPublicClient, http, getContract, Address, Abi } from 'viem';
+import { createPublicClient, http, getContract, Address, Abi, parseAbi } from 'viem';
 import { base } from 'viem/chains'
 import {
   AddressScore,
@@ -21,10 +21,11 @@ const FILE_SCHEMA_VERSION = 2;
 // Setup viem client with batching support
 const viemClient = createPublicClient({
   chain: base,
-  transport: http(config.rpcUrl),
-  batch: {
-    multicall: true
-  }
+  transport: http(config.rpcUrl, { 
+    batch: {
+      wait: 100
+    }
+  }),
 });
 
 // ABI for the lockerOwner method
@@ -33,6 +34,17 @@ const LOCKER_ABI = [
     inputs: [],
     name: 'lockerOwner',
     outputs: [{ type: 'address' }],
+    stateMutability: 'view',
+    type: 'function'
+  }
+] as const;
+
+// ABI for ERC20 balanceOf method
+const ERC20_ABI = [
+  {
+    inputs: [{ name: 'account', type: 'address' }],
+    name: 'balanceOf',
+    outputs: [{ type: 'uint256' }],
     stateMutability: 'view',
     type: 'function'
   }
@@ -693,6 +705,8 @@ export const getMemberScores = async (): Promise<Holder[]> => {
     const uniqueLockerOwners = new Set<string>();
     let successCount = 0;
     let failedCount = 0;
+
+    const accountToLockerMap: Map<string, string> = new Map();
     
     try {
       // Prepare all contract calls at once - viem will handle batching internally
@@ -721,6 +735,11 @@ export const getMemberScores = async (): Promise<Holder[]> => {
           const owner = result.result as Address;
           if (owner && owner !== '0x0000000000000000000000000000000000000000') {
             uniqueLockerOwners.add(owner.toLowerCase());
+            
+            // Store the mapping from account (owner) to locker
+            const lockerAddress = uniqueAccountsArray[i];
+            accountToLockerMap.set(owner.toLowerCase(), lockerAddress);
+            
             successCount++;
           }
         } else {
@@ -744,59 +763,59 @@ export const getMemberScores = async (): Promise<Holder[]> => {
     // Now get voting power for each unique locker owner
     console.log('\nFetching voting power for each unique locker owner...');
     
-    // Array to hold holders with their voting power
-    const holdersWithVP: Holder[] = [];
-    let vpSuccessCount = 0;
-    let vpFailedCount = 0;
-    let processedVPCount = 0;
+    // Create arrays to hold account addresses and their corresponding requests
+    const ownerAddresses: string[] = [];
+    const balancePromises: Promise<bigint>[] = [];
     
-    // Process locker owners to get voting power - do this sequentially to avoid rate limiting
-    for (const ownerAddress of uniqueLockerOwnersArray) {
-      try {
-        // Get voting power using the extracted function
-        const votingPower = await getAccountVotingPower(ownerAddress, true);
-        
-        // Add to holders array with voting power as amount
-        holdersWithVP.push({
-          address: ownerAddress,
-          amount: votingPower
-        });
-        
-        vpSuccessCount++;
-        
-        // Log progress
-        processedVPCount++;
-        if (processedVPCount % 10 === 0) {
-          process.stdout.write('.');
-        }
-        
-        // Add a small delay to avoid rate limiting
-        await new Promise(resolve => setTimeout(resolve, 100));
-
-        if (processedVPCount > 50) {
-          break; // TODO: remove this once we have a better way to handle this
-        }
-      } catch (error) {
-        console.error(`Error in voting power processing for ${ownerAddress}:`, error);
-        // Still add the address, but with 0 voting power
-        holdersWithVP.push({
-          address: ownerAddress,
-          amount: 0
-        });
-        
-        vpFailedCount++;
-        break; // TODO: remove this
+    // Prepare promises for all owner-locker pairs
+    for (const [ownerAddress, lockerAddress] of accountToLockerMap.entries()) {
+      ownerAddresses.push(ownerAddress);
+      balancePromises.push(getVotingPowerPromiseViaRpc(ownerAddress, lockerAddress));
+    }
+    
+    console.log(`Preparing ${balancePromises.length} balance requests in a single batch...`);
+    
+    // Execute all promises in a single batch
+    let balances: bigint[];
+    try {
+      balances = await Promise.all(balancePromises);
+      console.log('Successfully retrieved all balances in batch');
+    } catch (error) {
+      console.error('Error fetching balances in batch:', error);
+      balances = new Array(ownerAddresses.length).fill(BigInt(0)); // Fill with zeros on error
+    }
+    
+    // Create holders array with the results
+    const holdersWithVP: Holder[] = [];
+    
+    for (let i = 0; i < ownerAddresses.length; i++) {
+      const ownerAddress = ownerAddresses[i];
+      const balance = balances[i];
+      
+      // Convert the bigint balance to a number with 18 decimals
+      const balanceNumber = Number(balance) / 10**18;
+      
+      // Add to holders array
+      holdersWithVP.push({
+        address: ownerAddress,
+        amount: balanceNumber
+      });
+      
+      // Log every 50th balance for monitoring
+      if (i % 50 === 0 || i === ownerAddresses.length - 1) {
+        console.log(`Balance for ${ownerAddress}: ${balanceNumber}`);
       }
     }
     
-    console.log(`\nProcessed ${uniqueLockerOwnersArray.length} owners: ${vpSuccessCount} successful, ${vpFailedCount} failed`);
+    console.log(`\nProcessed ${ownerAddresses.length} owners with balances`);
     
     // Sort holders by amount (voting power) in descending order
     holdersWithVP.sort((a, b) => b.amount - a.amount);
-    
-    // Log the top holders
-    console.log('\nTop 5 holders by voting power:');
-    console.log(JSON.stringify(holdersWithVP.slice(0, 5), null, 2));
+
+    // get all holders with more than 10k voting power
+    const holdersWithVPMoreThan10k = holdersWithVP.filter(holder => holder.amount > 10000);
+    console.log(`Found ${holdersWithVPMoreThan10k.length} holders with more than 10k voting power`);
+    console.log(JSON.stringify(holdersWithVPMoreThan10k, null, 2));
     
     // Return the holders with voting power
     return holdersWithVP;
@@ -805,4 +824,44 @@ export const getMemberScores = async (): Promise<Holder[]> => {
     console.error(`Error fetching member scores: ${error}`);
     throw error;
   }
+};
+
+/**
+ * Gets the voting power for an account by querying the token contract's balanceOf function
+ * for the account's corresponding locker address
+ * 
+ * @param accountAddress The account address to get voting power for
+ * @returns The voting power as a number (normalized to decimals)
+ */
+export const getVotingPowerViaRpc = async (accountAddress: string, lockerAddress: string): Promise<number> => {
+  try {
+    // Query the token contract's balanceOf function for the locker address
+    const balance = await viemClient.readContract({
+      address: config.tokenAddress as Address,
+      abi: ERC20_ABI,
+      functionName: 'balanceOf',
+      args: [lockerAddress as Address]
+    });
+    
+    // Convert the bigint balance to a number with 18 decimals
+    const balanceNumber = Number(balance) / 10**18;
+    
+    return balanceNumber;
+  } catch (error) {
+    console.error(`Error getting voting power via RPC for ${accountAddress}:`, error);
+    return 0;
+  }
+};
+
+
+export const getVotingPowerPromiseViaRpc = (accountAddress: string, lockerAddress: string): Promise<bigint> => {
+  // Query the token contract's balanceOf function for the locker address
+  const balancePromise = viemClient.readContract({
+    address: config.tokenAddress as Address,
+    abi: ERC20_ABI,
+    functionName: 'balanceOf',
+    args: [lockerAddress as Address]
+  });
+  
+  return balancePromise;
 };
