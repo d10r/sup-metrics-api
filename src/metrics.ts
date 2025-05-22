@@ -10,7 +10,10 @@ import {
   DaoMembersCountResponse,
   TotalScoreResponse,
   VotingPower,
-  Holder
+  Holder,
+  DaoMember,
+  DelegateInfo,
+  DaoMembersResponse
 } from './types'; 
 import snapshot from '@snapshot-labs/snapshot.js';
 
@@ -178,57 +181,69 @@ let spaceConfig: {
   strategies: any[];
 } | null = null;
 
-// Create DAO members count manager
-const daoMembersManager = new MetricManager<number>(
-  0, // Initial value
-  fetchDaoMembersCount, // Update function
-  'daoMembers.json',
-  config.daoMembersCountUpdateInterval
-);
+// // Create DAO members count manager
+// const daoMembersManager = new MetricManager<number>(
+//   0, // Initial value
+//   fetchDaoMembersCount, // Update function
+//   'daoMembers.json',
+//   config.daoMembersCountUpdateInterval
+// );
 
 // Create delegated score manager
 const delegatedScoreManager = new MetricManager<{
   totalScore: number;
   perDelegateScore: AddressScore[];
+  delegatorMap: Record<string, string>;
 }>(
-  { totalScore: 0, perDelegateScore: [] }, // Initial value
+  { totalScore: 0, perDelegateScore: [], delegatorMap: {} }, // Initial value
   fetchTotalDelegatedScore, // Update function
   'delegatedScore.json',
   config.totalDelegatedScoreUpdateInterval
 );
 
-// Fetch DAO members count
-async function fetchDaoMembersCount(): Promise<number> {
-  const holders = await queryAllPages(
-    (lastId) => `{
-      accountTokenSnapshots(
-        first: 1000,
-        where: {
-          token: "${config.tokenAddress.toLowerCase()}",
-          totalConnectedMemberships_gt: 0,
-          id_gt: "${lastId}"
-        },
-        orderBy: id,
-        orderDirection: asc
-      ) {
-        id
-      }
-    }`,
-    (res) => res.data.data.accountTokenSnapshots,
-    (item) => item.id,
-    config.sfSubgraphUrl
-  );
+// Create member scores manager
+const memberScoresManager = new MetricManager<Holder[]>(
+  [], // Initial value
+  fetchDaoMemberScores,
+  'memberScores.json',
+  config.memberScoresUpdateInterval
+);
 
-  const count = holders.length;
-  console.log(`Updated DAO members count: ${count}`);
-  return count;
-}
+// Fetch DAO members count
+// async function fetchDaoMembersCount(): Promise<number> {
+//   console.log(`fetchDaoMembersCount()`);
+//   const holders = await queryAllPages(
+//     (lastId) => `{
+//       accountTokenSnapshots(
+//         first: 1000,
+//         where: {
+//           token: "${config.tokenAddress.toLowerCase()}",
+//           totalConnectedMemberships_gt: 0,
+//           id_gt: "${lastId}"
+//         },
+//         orderBy: id,
+//         orderDirection: asc
+//       ) {
+//         id
+//       }
+//     }`,
+//     (res) => res.data.data.accountTokenSnapshots,
+//     (item) => item.id,
+//     config.sfSubgraphUrl
+//   );
+
+//   const count = holders.length;
+//   console.log(`Updated DAO members count: ${count}`);
+//   return count;
+// }
 
 // Fetch total delegated score
 async function fetchTotalDelegatedScore(): Promise<{
   totalScore: number;
   perDelegateScore: AddressScore[];
+  delegatorMap: Record<string, string>;
 }> {
+  console.log(`fetchTotalDelegatedScore()`);
   if (!spaceConfig) {
     await loadSpaceConfig();
   }
@@ -245,22 +260,31 @@ async function fetchTotalDelegatedScore(): Promise<{
         orderDirection: asc
       ) {
         id
+        delegator
         delegate
       }
     }`,
     (res) => res.data.data.delegations,
-    (item) => item.delegate,
+    (item) => item,
     `https://gateway.thegraph.com/api/${config.graphNetworkApiKey}/subgraphs/id/${config.delegationSubgraphId}`
   );
 
-  console.log(`subgraph url: https://gateway.thegraph.com/api/${config.graphNetworkApiKey}/subgraphs/id/${config.delegationSubgraphId}`);
+  //console.log(`subgraph url: https://gateway.thegraph.com/api/${config.graphNetworkApiKey}/subgraphs/id/${config.delegationSubgraphId}`);
+
+  // Store delegator->delegate mapping
+  const delegatorMap: Record<string, string> = {};
+  // log delegations
+  //console.log(`delegations: ${JSON.stringify(delegations.slice(0, 10), null, 2)}, ...`);
+  for (const delegation of delegations) {
+    delegatorMap[delegation.delegator.toLowerCase()] = delegation.delegate.toLowerCase();
+  }
 
   // Count occurrences of each delegate
-  const delegateCounts = delegations.reduce((counts: Record<string, number>, delegate: string) => {
-    counts[delegate] = (counts[delegate] || 0) + 1;
+  const delegateCounts = delegations.reduce((counts: Record<string, number>, delegation: any) => {
+    counts[delegation.delegate.toLowerCase()] = (counts[delegation.delegate.toLowerCase()] || 0) + 1;
     return counts;
   }, {});
-  console.log(`delegate counts: ${JSON.stringify(delegateCounts, null, 2)}`);
+  //console.log(`delegate counts: ${JSON.stringify(delegateCounts, null, 2)}`);
 
   // Get unique delegate addresses
   const delegateAddresses = Object.keys(delegateCounts);
@@ -281,17 +305,20 @@ async function fetchTotalDelegatedScore(): Promise<{
     process.stdout.write(".");
     // throttle requests to the scores API
     await new Promise(resolve => setTimeout(resolve, 5000));
+    if (process.env.STOP_EARLY) {
+      break;
+    }
   }
 
   console.log(`Total delegated score: ${totalScore}`);
-  return { totalScore, perDelegateScore };
+  return { totalScore, perDelegateScore, delegatorMap };
 }
 
 // Public API methods
 export const getDaoMembersCount = (): DaoMembersCountResponse => {
-  const { data, lastUpdatedAt } = daoMembersManager.getData();
+  const { data, lastUpdatedAt } = memberScoresManager.getData();
   return {
-    daoMembersCount: data,
+    daoMembersCount: data.length,
     lastUpdatedAt
   };
 };
@@ -301,6 +328,76 @@ export const getTotalDelegatedScore = (): TotalDelegatedScoreResponse => {
   return {
     totalDelegatedScore: data.totalScore,
     perDelegateScore: data.perDelegateScore,
+    lastUpdatedAt
+  };
+};
+
+// Combine data for DAO members endpoint
+export const getDaoMembers = (): DaoMember[] => {
+  const { data: members } = memberScoresManager.getData();
+  const { data: delegateData } = delegatedScoreManager.getData();
+  
+  // Create lookup map for delegates
+  const delegateMap = new Map(
+    delegateData.perDelegateScore.map(d => [d.address.toLowerCase(), d])
+  );
+  
+  // Create a map of all members by address for quick lookup
+  const memberMap = new Map(
+    members.map(m => [m.address.toLowerCase(), m])
+  );
+  
+  // Create a set of all addresses we need to include (members + delegates)
+  const allAddresses = new Set([
+    ...members.map(m => m.address.toLowerCase()),
+    ...delegateData.perDelegateScore.map(d => d.address.toLowerCase())
+  ]);
+  
+  // Convert to required format
+  const daoMembers = Array.from(allAddresses).map(address => {
+    const member = memberMap.get(address);
+    const delegateInfo = delegateMap.get(address);
+    const hasDelegate = delegateData.delegatorMap[address] || null;
+    
+    return {
+      address,
+      locker: member?.locker || null,
+      votingPower: member?.amount || 0, // Use 0 if no member data
+      hasDelegate,
+      isDelegate: delegateInfo ? {
+        delegatedVotingPower: delegateInfo.delegatedScore,
+        nrDelegators: delegateInfo.nrDelegations
+      } : null
+    };
+  });
+
+  // now order by `votingPower + isDelegate.delegatedVotingPower` descending
+  daoMembers.sort((a, b) => {
+    const aTotal = a.votingPower + (a.isDelegate?.delegatedVotingPower || 0);
+    const bTotal = b.votingPower + (b.isDelegate?.delegatedVotingPower || 0);
+    return bTotal - aTotal;
+  });
+
+  return daoMembers;
+};
+
+export const getDaoMembersWithFilters = (
+  minVotingPower: number = 0, 
+  includeAllDelegates: boolean = false
+): DaoMembersResponse => {
+  const daoMembers = getDaoMembers();
+  const { lastUpdatedAt } = memberScoresManager.getData();
+  
+  const filteredMembers = daoMembers.filter(member => {
+    // If include_all_delegates is true AND this is a delegate, bypass min_vp check
+    if (includeAllDelegates && member.isDelegate) return true;
+    
+    // Otherwise apply minimum voting power filter
+    return member.votingPower >= minVotingPower;
+  });
+  
+  return {
+    daoMembers: filteredMembers,
     lastUpdatedAt
   };
 };
@@ -317,12 +414,13 @@ export const setupMetricsUpdates = (): () => void => {
     throw error;
   });
   
-  const stopDaoUpdates = daoMembersManager.setupPeriodicUpdates();
+  // Remove daoMembersManager since it's now redundant
   const stopDelegatedUpdates = delegatedScoreManager.setupPeriodicUpdates();
+  const stopMemberScoresUpdates = memberScoresManager.setupPeriodicUpdates();
   
   return () => {
-    stopDaoUpdates();
     stopDelegatedUpdates();
+    stopMemberScoresUpdates();
   };
 };
 
@@ -338,6 +436,7 @@ async function queryAllPages<T>(
   const pageSize = 1000;
 
   while (true) {
+    console.log(`querying page ${lastId}`);
     const response = await axios.post(graphqlEndpoint, {
       query: queryFn(lastId)
     });
@@ -356,13 +455,16 @@ async function queryAllPages<T>(
       lastId = newItems[newItems.length - 1].id;
     }
     process.stdout.write(".");
+    if (process.env.STOP_EARLY) {
+      break;
+    }
   }
 
   return items;
 }
 
 export const loadSpaceConfig = async () => {
-  console.log("Loading space config");
+  //console.log("Loading space config");
   try {
     // Fetch space configuration
     const query = `
@@ -388,7 +490,7 @@ export const loadSpaceConfig = async () => {
         }
       }
     );
-    console.log(response.data.data.space);
+    //console.log(response.data.data.space);
 
     const space = response.data.data.space;
     if (!space) {
@@ -428,8 +530,9 @@ export const getVotingPower = async (address: string): Promise<VotingPower> => {
     const response = await axios.post(config.snapshotScoreUrl, scoreApiPayload);
     if (response.data?.result?.vp) {
       const totalVp = response.data.result.vp;
-      const delegatedVp = response.data.result.vp_by_strategy[0];
-      const ownVp = response.data.result.vp_by_strategy[1];
+      // TODO: add check that item 0 is indeed the own voting power
+      const ownVp = response.data.result.vp_by_strategy[0];
+      const delegatedVp = response.data.result.vp_by_strategy[1];
       console.log(`Voting power for ${address}: ${totalVp} (delegated: ${delegatedVp}, own: ${ownVp})`);
       console.log(`Voting power raw for ${address}: ${JSON.stringify(response.data.result, null, 2)}`);
       return {
@@ -598,7 +701,7 @@ export const getTotalScore = async (): Promise<TotalScoreResponse> => {
   }
 };
 
-export const getMemberScores = async (): Promise<Holder[]> => {
+async function fetchDaoMemberScores(): Promise<Holder[]> {
   if (!spaceConfig) {
     await loadSpaceConfig();
   }
@@ -642,8 +745,8 @@ export const getMemberScores = async (): Promise<Holder[]> => {
     // Query members for each unique pool with pagination
     console.log("Fetching pool members for each unique pool...");
     for (const poolId of uniquePools) {
-      if (poolMemberCnt > 500) {
-        break; // TODO: remove this once we have a better way to handle this
+      if (process.env.STOP_EARLY && poolMemberCnt > 500) {
+        break;
       }
       try {
         console.log(`Fetching members for pool ${poolId}`);
@@ -798,7 +901,8 @@ export const getMemberScores = async (): Promise<Holder[]> => {
       // Add to holders array
       holdersWithVP.push({
         address: ownerAddress,
-        amount: balanceNumber
+        amount: balanceNumber,
+        locker: accountToLockerMap.get(ownerAddress) // Just use the result from Map.get() which will be string or undefined
       });
       
       // Log every 50th balance for monitoring
@@ -824,7 +928,7 @@ export const getMemberScores = async (): Promise<Holder[]> => {
     console.error(`Error fetching member scores: ${error}`);
     throw error;
   }
-};
+}
 
 /**
  * Gets the voting power for an account by querying the token contract's balanceOf function

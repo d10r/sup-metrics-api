@@ -73,6 +73,8 @@ export interface ConfigResponse {
 export interface Holder {
   address: string;
   amount: number;
+  locker?: string;
+  delegate?: string;
 }
 
 /**
@@ -90,4 +92,22 @@ export interface TotalScoreResponse {
 export interface VotingPower {
   total: number;
   delegated: number;
+}
+
+export interface DaoMember {
+  address: string;
+  locker: string | null;
+  votingPower: number;
+  hasDelegate: string | null;
+  isDelegate: DelegateInfo | null;
+}
+
+export interface DelegateInfo {
+  delegatedVotingPower: number;
+  nrDelegators: number;
+}
+
+export interface DaoMembersResponse {
+  daoMembers: DaoMember[];
+  lastUpdatedAt: number;
 } 

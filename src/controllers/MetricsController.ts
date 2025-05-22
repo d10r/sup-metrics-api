@@ -6,7 +6,7 @@ import {
   getVotingPower,
   getDelegateForUser,
   getTotalScore,
-  getMemberScores
+  getDaoMembersWithFilters
 } from '../metrics';
 import {
   DaoMembersCountResponse,
@@ -15,7 +15,7 @@ import {
   UserDelegateResponse,
   ConfigResponse,
   TotalScoreResponse,
-  Holder
+  DaoMembersResponse
 } from '../types';
 import { config } from '../config';
 
@@ -105,9 +105,26 @@ export class MetricsController extends Controller {
     return getTotalScore();
   }
 
-  @Get('/member_scores')
-  public async getMemberScores(): Promise<Holder[]> {
-    return getMemberScores();
+  /**
+   * Get DAO members with delegation information.<br><br>
+   * 
+   * Returns a list of DAO members with their voting power, delegation info, and delegate status.<br>
+   * The list is ordered by voting power + delegated voting power descending.<br>
+   * Can be filtered by minimum voting power and to include all delegates regardless of voting power.<br>
+   * This is periodically updated in the background. The last update timestamp is returned.
+   * 
+   * @param min_vp Minimum voting power threshold (default: 0)
+   * @param include_all_delegates Include all delegates regardless of voting power (default: false)
+   */
+  @Get('/dao_members')
+  public getDaoMembers(
+    @Query() min_vp?: number,
+    @Query() include_all_delegates?: string
+  ): DaoMembersResponse {
+    return getDaoMembersWithFilters(
+      min_vp !== undefined ? Number(min_vp) : 0,
+      include_all_delegates === 'true'
+    );
   }
 
   /**
