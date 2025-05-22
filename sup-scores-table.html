@@ -6,7 +6,7 @@
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>SUP Delegation Table</title>
+  <title>SUP DAO Members Table</title>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -53,12 +53,12 @@
   </style>
 </head>
 <body>
-  <div id="delegation-table-container">Loading delegation data...</div>
-  <div id="error-message">Error loading delegation data. Please try again later.</div>
+  <div id="delegation-table-container">Loading DAO member data...</div>
+  <div id="error-message">Error loading DAO member data. Please try again later.</div>
 
   <script>
     //const SUP_METRICS_API_URL = 'https://sup-metrics-api.superfluid.dev/v1';
-    const SUP_METRICS_API_URL = 'http://localhost:44045/v1';
+    const SUP_METRICS_API_URL = 'http://localhost:4044/v1';
 
     // We'll replace the static walletNames with data fetched from delegates-metadata.json
     let delegatesMetadata = {};
@@ -106,18 +106,18 @@
         // First, load the delegates metadata
         await fetchDelegatesMetadata();
         
-        // Fetch total delegated score
-        const delegatedScoreResponse = await fetch(`${SUP_METRICS_API_URL}/total_delegated_score`, {
+        // Fetch DAO members data from the new endpoint
+        const daoMembersResponse = await fetch(`${SUP_METRICS_API_URL}/dao_members`, {
           cache: 'no-store'  // Ensure fresh data
         });
         
-        if (!delegatedScoreResponse.ok) {
-          throw new Error(`HTTP error ${delegatedScoreResponse.status}`);
+        if (!daoMembersResponse.ok) {
+          throw new Error(`HTTP error ${daoMembersResponse.status}`);
         }
         
-        const delegatedData = await delegatedScoreResponse.json();
+        const daoMembersData = await daoMembersResponse.json();
         
-        // Fetch total score from new endpoint
+        // Fetch total score (we still need this for percentage calculations)
         const totalScoreResponse = await fetch(`${SUP_METRICS_API_URL}/total_score`, {
           cache: 'no-store'  // Ensure fresh data
         });
@@ -129,17 +129,51 @@
         const totalScoreData = await totalScoreResponse.json();
         
         // Check if we have valid data
-        const hasValidData = delegatedData && delegatedData.perDelegateScore && delegatedData.perDelegateScore.length > 0;
+        const hasValidData = daoMembersData && daoMembersData.daoMembers && daoMembersData.daoMembers.length > 0;
         
-        // Sort delegates by score in descending order (if we have data)
-        const sortedDelegates = hasValidData ? 
-          delegatedData.perDelegateScore.sort((a, b) => b.score - a.score) : [];
+        // Process and transform the data
+        const processedMembers = [];
+        let totalVotingPower = 0;
         
-        // Get total delegated score and total score
-        const totalDelegatedScore = hasValidData ? delegatedData.totalDelegatedScore : 0;
-        const totalScore = totalScoreData ? totalScoreData.totalScore : 0;
-        // the total non-delegated score
-        const notDelegatedScore = totalScore - totalDelegatedScore;
+        if (hasValidData) {
+          daoMembersData.daoMembers.forEach(member => {
+            const ownVotingPower = member.votingPower || 0;
+            let delegatedVotingPower = 0;
+            let nrDelegators = 0;
+            let isDelegate = false;
+            
+            // Check if this member is a delegate
+            if (member.isDelegate) {
+              delegatedVotingPower = member.isDelegate.delegatedVotingPower || 0;
+              nrDelegators = member.isDelegate.nrDelegators || 0;
+              isDelegate = true;
+            }
+            
+            // Calculate total voting power
+            const totalMemberVotingPower = ownVotingPower + delegatedVotingPower;
+            
+            // Store processed data
+            processedMembers.push({
+              address: member.address,
+              locker: member.locker,
+              ownVotingPower: ownVotingPower,
+              delegatedVotingPower: delegatedVotingPower,
+              totalVotingPower: totalMemberVotingPower,
+              nrDelegators: nrDelegators,
+              isDelegate: isDelegate,
+              hasDelegate: member.hasDelegate
+            });
+            
+            // Add to total (we'll compare with the total from API later)
+            totalVotingPower += totalMemberVotingPower;
+          });
+          
+          // Sort members by total voting power (own + delegated) in descending order
+          processedMembers.sort((a, b) => b.totalVotingPower - a.totalVotingPower);
+        }
+        
+        // Get total score from API response
+        const totalScore = totalScoreData ? totalScoreData.totalScore : totalVotingPower;
         
         // Build table HTML
         let tableHtml = `
@@ -149,10 +183,11 @@
                 <th>#</th>
                 <th>Name</th>
                 <th>Delegate?</th>
+                <th>Delegated To</th>
                 <th>Delegated Wallets</th>
                 <th>Delegated Tokens</th>
                 <th>Own Tokens</th>
-                <th>votable SUP tokens</th>
+                <th>Total SUP tokens</th>
                 <th>%</th>
                 <th>cumulative %</th>
                 <th>ENS</th>
@@ -164,132 +199,98 @@
         
         let cumulativePercent = 0;
         
-        // Keep track of addresses we've seen in the API response
+        // Keep track of addresses we've seen
         const seenAddresses = new Set();
         
-        // Helper function to create a table row for a delegate
-        function createRow(address, delegateData, index, percent, cumulativePercent, hasValidData) {
-          // Get delegate metadata
-          const metadata = delegatesMetadata[address.toLowerCase()] || { name: 'Unknown', ens: null, forumThread: null };
-          const delegateName = metadata.name;
+        // Helper function to create a table row for a DAO member
+        function createRow(member, index, cumulativePercent, hasValidData) {
+          // Get member metadata
+          const metadata = delegatesMetadata[member.address.toLowerCase()] || { name: 'Unknown', ens: null, forumThread: null };
+          const memberName = metadata.name;
           const forumThread = metadata.forumThread;
           
           // Only display ENS if it contains a dot character
-          let delegateEns = metadata.ens || '';
-          if (!delegateEns.includes('.')) {
-            delegateEns = '';
+          let memberEns = metadata.ens || '';
+          if (!memberEns.includes('.')) {
+            memberEns = '';
           }
           
-          // Format values based on whether we have valid data
-          let scoreDisplay, percentDisplay, cumulativePercentDisplay;
+          // Check if member has a delegate
+          const delegatedTo = member.hasDelegate ? (delegatesMetadata[member.hasDelegate.toLowerCase()]?.name || truncateAddress(member.hasDelegate)) : '-';
           
-          if (hasValidData) {
-            scoreDisplay = formatNumber(delegateData.totalScore);
-            delegatedScoreDisplay = formatNumber(delegateData.delegatedScore);
-            ownScoreDisplay = formatNumber(delegateData.ownScore);
-            nrDelegationsDisplay = delegateData.nrDelegations;
-            percentDisplay = percent === 0 ? '0%' : (Math.round(percent) === 0 ? '<1%' : `${Math.round(percent)}%`);
-            cumulativePercentDisplay = cumulativePercent === 100 ? '100%' : (Math.round(cumulativePercent) === 100 ? '>99%' : `${Math.round(cumulativePercent)}%`);
-          } else {
-            scoreDisplay = "?";
-            percentDisplay = "?";
-            cumulativePercentDisplay = "?";
-          }
+          // Calculate percentage of total
+          const percent = (member.totalVotingPower / totalScore) * 100;
+          
+          // Format values
+          const ownVotingPowerDisplay = formatNumber(member.ownVotingPower);
+          const delegatedVotingPowerDisplay = member.isDelegate ? formatNumber(member.delegatedVotingPower) : '-';
+          const totalVotingPowerDisplay = formatNumber(member.totalVotingPower);
+          const nrDelegatorsDisplay = member.isDelegate ? member.nrDelegators : '-';
+          const percentDisplay = percent === 0 ? '0%' : (Math.round(percent) === 0 ? '<1%' : `${Math.round(percent)}%`);
+          const cumulativePercentDisplay = cumulativePercent === 100 ? '100%' : (Math.round(cumulativePercent) === 100 ? '>99%' : `${Math.round(cumulativePercent)}%`);
           
           // Format name as a link if forum thread is available
           const nameDisplay = forumThread ? 
-            `<a href="${forumThread}" target="_blank">${delegateName}</a>` : 
-            delegateName;
+            `<a href="${forumThread}" target="_blank">${memberName}</a>` : 
+            memberName;
           
           return `
             <tr>
               <td>${index + 1}</td>
               <td>${nameDisplay}</td>
-              <td>Yes</td>
-              <td>${nrDelegationsDisplay}</td>
-              <td>${delegatedScoreDisplay}</td>
-              <td>${ownScoreDisplay}</td>
-              <td>${scoreDisplay}</td>
+              <td>${member.isDelegate ? 'Yes' : 'No'}</td>
+              <td>${member.hasDelegate ? delegatedTo : '-'}</td>
+              <td>${nrDelegatorsDisplay}</td>
+              <td>${delegatedVotingPowerDisplay}</td>
+              <td>${ownVotingPowerDisplay}</td>
+              <td>${totalVotingPowerDisplay}</td>
               <td>${percentDisplay}</td>
               <td>${cumulativePercentDisplay}</td>
-              <td>${delegateEns}</td>
-              <td class="wallet-address">${address}</td>
+              <td>${memberEns}</td>
+              <td class="wallet-address">${member.address}</td>
             </tr>
           `;
         }
         
-        // Generate table rows for delegates from API (if we have data)
+        // Generate table rows for DAO members from API (if we have data)
         if (hasValidData) {
-          sortedDelegates.forEach((delegate, index) => {
-            const address = delegate.address;
-            seenAddresses.add(address.toLowerCase());
-            const score = delegate.score;
-            // Calculate percentage based on total score instead of delegated score
-            const percent = (score / totalScore) * 100;
+          processedMembers.forEach((member, index) => {
+            seenAddresses.add(member.address.toLowerCase());
+            
+            // Calculate percentage and cumulative percentage
+            const percent = (member.totalVotingPower / totalScore) * 100;
             cumulativePercent += percent;
             
-            tableHtml += createRow(address, {
-              totalScore: score,
-              delegatedScore: delegate.delegatedScore,
-              ownScore: score - delegate.delegatedScore,
-              nrDelegations: delegate.nrDelegations,
-            },
-            index, percent, cumulativePercent, true);
+            tableHtml += createRow(member, index, cumulativePercent, true);
           });
-        }
-        
-        // Add delegates from metadata that weren't in the API response
-        // If we have no API data, show all delegates from metadata
-        let additionalIndex = hasValidData ? sortedDelegates.length : 0;
-        for (const [address, metadata] of Object.entries(delegatesMetadata)) {
-          if (!hasValidData || !seenAddresses.has(address.toLowerCase())) {
-            tableHtml += createRow(address, {
-              totalScore: 0,
-              delegatedScore: 0,
-              ownScore: 0,
-              nrDelegations: 0,
-            },
-            additionalIndex, 0, cumulativePercent, hasValidData);
-            additionalIndex++;
-          }
-        }
-
-        // Add the "<Not Delegated>" row
-        if (hasValidData && totalScore > 0) {
-          const notDelegatedPercent = (notDelegatedScore / totalScore) * 100;
+          
+          // Add timestamp for last updated
+          const lastUpdatedAt = daoMembersData.lastUpdatedAt || (Date.now() / 1000);
+          console.log('Last updated:', new Date(lastUpdatedAt * 1000).toISOString());
+          console.log('Last updated:', new Date(lastUpdatedAt * 1000).toLocaleString());
           
           tableHtml += `
-            <tr>
-              <td>${additionalIndex + 1}</td>
-              <td>&lt;Not Delegated&gt;</td>
-              <td>No</td>
-              <td>-</td>
-              <td>-</td>
-              <td>-</td>
-              <td>${formatNumber(notDelegatedScore)}</td>
-              <td>${notDelegatedPercent === 0 ? '0%' : (Math.round(notDelegatedPercent) === 0 ? '<1%' : `${Math.round(notDelegatedPercent)}%`)}</td>
-              <td>100%</td>
-              <td></td>
-              <td></td>
-            </tr>
-          `;
-        }
-
-        // log last updated time
-        console.log('Last updated:', new Date(delegatedData.lastUpdatedAt * 1000).toISOString());
-        console.log('Last updated:', new Date(delegatedData.lastUpdatedAt * 1000).toLocaleString());
-        
-        tableHtml += `
             </tbody>
           </table>
-          <div class="last-updated">Last updated: ${hasValidData ? new Date(delegatedData.lastUpdatedAt * 1000).toLocaleString() : "Unknown"}</div>
-        `;
+          <div class="last-updated">Last updated: ${new Date(lastUpdatedAt * 1000).toLocaleString()}</div>
+          `;
+        } else {
+          // If no valid data, show empty table with message
+          tableHtml += `
+            <tr>
+              <td colspan="12">No DAO member data available</td>
+            </tr>
+            </tbody>
+          </table>
+          <div class="last-updated">Last updated: Unknown</div>
+          `;
+        }
         
         // Update container
         document.getElementById('delegation-table-container').innerHTML = tableHtml;
         document.getElementById('error-message').style.display = 'none';
       } catch (error) {
-        console.error('Error fetching delegation data:', error);
+        console.error('Error fetching DAO member data:', error);
         document.getElementById('delegation-table-container').innerHTML = '';
         document.getElementById('error-message').style.display = 'block';
       }
