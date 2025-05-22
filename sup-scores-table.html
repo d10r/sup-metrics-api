@@ -6,7 +6,7 @@
   <meta http-equiv="Cache-Control" content="no-store, no-cache, must-revalidate">
   <meta http-equiv="Pragma" content="no-cache">
   <meta http-equiv="Expires" content="0">
-  <title>SUP DAO Members Table</title>
+  <title>Superfluid DAO Voting Power & Delegates</title>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -60,6 +60,9 @@
     //const SUP_METRICS_API_URL = 'https://sup-metrics-api.superfluid.dev/v1';
     const SUP_METRICS_API_URL = 'http://localhost:4044/v1';
 
+    // voting power not yet accounted for in the API
+    const EXTRA_SUP_VP = 400_000_000;
+
     // We'll replace the static walletNames with data fetched from delegates-metadata.json
     let delegatesMetadata = {};
 
@@ -98,6 +101,15 @@
     // Truncate wallet address for display
     function truncateAddress(address) {
       return address.substring(0, 6) + '...' + address.substring(address.length - 4);
+    }
+    
+    // Format a name with an optional link to a forum thread
+    function formatNameWithLink(name, forumThread) {
+      if (!name) return '';
+      
+      return forumThread ? 
+        `<a href="${forumThread}" target="_blank">${name}</a>` : 
+        name;
     }
 
     // Fetch data and create table
@@ -173,7 +185,7 @@
         }
         
         // Get total score from API response
-        const totalScore = totalScoreData ? totalScoreData.totalScore : totalVotingPower;
+        const totalScore = totalScoreData.totalScore + EXTRA_SUP_VP;
         
         // Build table HTML
         let tableHtml = `
@@ -215,13 +227,18 @@
             memberEns = '';
           }
           
-          // Format name as a link if forum thread is available
-          const nameDisplay = forumThread ? 
-            `<a href="${forumThread}" target="_blank">${memberName}</a>` : 
-            memberName;
+          // Format delegate name with link if available
+          const nameDisplay = formatNameWithLink(memberName, forumThread);
           
           // Check if member has a delegate
-          const delegatedTo = member.hasDelegate ? "to " +(delegatesMetadata[member.hasDelegate.toLowerCase()]?.name || truncateAddress(member.hasDelegate)) : '';
+          const delegateMetadata = member.hasDelegate ? delegatesMetadata[member.hasDelegate.toLowerCase()] : null;
+          const delegateName = delegateMetadata?.name || (member.hasDelegate ? truncateAddress(member.hasDelegate) : '');
+          const delegateForumThread = delegateMetadata?.forumThread || null;
+          
+          // Format the delegate's name with link if available
+          const delegatedTo = member.hasDelegate ? 
+            "to " + formatNameWithLink(delegateName, delegateForumThread) : 
+            '';
           
           // Calculate percentage of total
           const percent = (member.totalVotingPower / totalScore) * 100;
@@ -231,8 +248,9 @@
           const delegatedVotingPowerDisplay = member.isDelegate ? formatNumber(member.delegatedVotingPower) : '';
           const totalVotingPowerDisplay = formatNumber(member.totalVotingPower);
           const nrDelegatorsDisplay = member.isDelegate ? member.nrDelegators : '';
-          const percentDisplay = percent === 0 ? '0%' : (Math.round(percent) === 0 ? '<1%' : `${Math.round(percent)}%`);
-          const cumulativePercentDisplay = cumulativePercent === 100 ? '100%' : (Math.round(cumulativePercent) === 100 ? '>99%' : `${Math.round(cumulativePercent)}%`);
+          // Format percentage with 2 decimal places
+          const percentDisplay = percent === 0 ? '0.00%' : `${percent.toFixed(2)}%`;
+          const cumulativePercentDisplay = cumulativePercent === 100 ? '100.00%' : `${cumulativePercent.toFixed(2)}%`;
           
           return `
             <tr>
@@ -254,6 +272,39 @@
         
         // Generate table rows for DAO members from API (if we have data)
         if (hasValidData) {
+          // Calculate summary statistics
+          let totalDelegatedWallets = 0;
+          let totalDelegatedVotingPower = 0;
+          let numberOfDelegates = 0;
+          
+          // Calculate totals for summary row
+          processedMembers.forEach(member => {
+            if (member.isDelegate) {
+              totalDelegatedWallets += member.nrDelegators;
+              totalDelegatedVotingPower += member.delegatedVotingPower;
+              numberOfDelegates++;
+            }
+          });
+          
+          // Add summary row as the first row
+          tableHtml += `
+            <tr>
+              <td>Total</td>
+              <td class="wallet-address"></td>
+              <td></td>
+              <td>${formatNumber(totalScore)}</td>
+              <td>${totalDelegatedWallets}</td>
+              <td>${numberOfDelegates}</td>
+              <td></td>
+              <td>${totalDelegatedWallets}</td>
+              <td>${formatNumber(totalDelegatedVotingPower)}</td>
+              <td>${formatNumber(totalScore)}</td>
+              <td>100.00%</td>
+              <td>100.00%</td>
+            </tr>
+          `;
+          
+          // Add the regular rows
           processedMembers.forEach((member, index) => {
             seenAddresses.add(member.address.toLowerCase());
             
