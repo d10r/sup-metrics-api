@@ -276,6 +276,7 @@
           let totalDelegatedWallets = 0;
           let totalDelegatedVotingPower = 0;
           let numberOfDelegates = 0;
+          let sumOfDisplayedOwnVotingPower = 0;
           
           // Calculate totals for summary row
           processedMembers.forEach(member => {
@@ -284,6 +285,7 @@
               totalDelegatedVotingPower += member.delegatedVotingPower;
               numberOfDelegates++;
             }
+            sumOfDisplayedOwnVotingPower += member.ownVotingPower;
           });
           
           // Add summary row as the first row
@@ -314,6 +316,28 @@
             
             tableHtml += createRow(member, index, cumulativePercent, true);
           });
+
+          // Calculate remaining voting power (accounts not meeting the criteria)
+          const remainingVotingPower = Math.max(0, totalScore - sumOfDisplayedOwnVotingPower - totalDelegatedVotingPower);
+          const remainingPercent = (remainingVotingPower / totalScore) * 100;
+          
+          // Add the "Other" row at the end
+          tableHtml += `
+            <tr>
+              <td>&lt;Other&gt;</td>
+              <td class="wallet-address"></td>
+              <td></td>
+              <td>${formatNumber(remainingVotingPower)}</td>
+              <td></td>
+              <td></td>
+              <td></td>
+              <td></td>
+              <td></td>
+              <td>${formatNumber(remainingVotingPower)}</td>
+              <td>${remainingPercent.toFixed(2)}%</td>
+              <td>100.00%</td>
+            </tr>
+          `;
           
           // Add timestamp for last updated
           const lastUpdatedAt = daoMembersData.lastUpdatedAt || (Date.now() / 1000);
