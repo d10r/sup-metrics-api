@@ -25,11 +25,14 @@
       border-bottom: 1px solid #ddd;
     }
     .delegation-table th {
-      background-color: #f2f2f2;
+      background-color: rgba(135, 238, 32, 0.15);  /* Very light green */
       font-weight: bold;
+      border-bottom: 2px solid rgba(135, 238, 32, 0.6);
+      border-top: 1px solid rgba(135, 238, 32, 0.4);
+      padding: 10px 8px;
     }
     .delegation-table tr:nth-child(even) {
-      background-color: #f9f9f9;
+      background-color: rgba(245, 250, 240, 0.8);  /* Very subtle light green tint */
     }
     .delegation-table tfoot {
       font-weight: bold;
@@ -50,6 +53,33 @@
       border-radius: 4px;
       display: none;
     }
+    /* Special row styling */
+    .special-row {
+      background-color: rgba(135, 238, 32, 0.08) !important;  /* Very light green */
+      font-weight: 500; /* Slightly bold */
+      border-top: 1px solid rgba(135, 238, 32, 0.3);
+      border-bottom: 1px solid rgba(135, 238, 32, 0.3);
+    }
+    .total-row {
+      border-bottom: 2px solid rgba(135, 238, 32, 0.5);
+    }
+    .other-row {
+      border-top: 2px solid rgba(135, 238, 32, 0.5);
+    }
+    /* Below threshold styling */
+    .below-threshold {
+      color: #777; /* Slightly greyed out text */
+    }
+    .below-threshold a {
+      color: #5a8a10; /* Adjusted link color for below-threshold rows */
+    }
+    a {
+      color: #497a00;  /* Darker green for links */
+      text-decoration: none;
+    }
+    a:hover {
+      text-decoration: underline;
+    }
   </style>
 </head>
 <body>
@@ -57,13 +87,16 @@
   <div id="error-message">Error loading DAO member data. Please try again later.</div>
 
   <script>
-    //const SUP_METRICS_API_URL = 'https://sup-metrics-api.superfluid.dev/v1';
-    const SUP_METRICS_API_URL = 'http://localhost:4044/v1';
+    const SUP_METRICS_API_URL = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
+      ? 'http://localhost:4044/v1'
+      : 'https://sup-metrics-api.superfluid.dev/v1';
 
     // voting power not yet accounted for in the API
     const EXTRA_SUP_VP = 400_000_000;
 
-    // We'll replace the static walletNames with data fetched from delegates-metadata.json
+    // only show members (which aren't delegates) with at least that much voting power
+    const VP_CUTOFF = 100_000;
+
     let delegatesMetadata = {};
 
     // Fetch delegates metadata from JSON file
@@ -119,7 +152,7 @@
         await fetchDelegatesMetadata();
         
         // Fetch DAO members data from the new endpoint
-        const daoMembersResponse = await fetch(`${SUP_METRICS_API_URL}/dao_members?min_vp=100000&include_all_delegates=true`, {
+        const daoMembersResponse = await fetch(`${SUP_METRICS_API_URL}/dao_members?min_vp=${VP_CUTOFF}&include_all_delegates=true`, {
           cache: 'no-store'  // Ensure fresh data
         });
         
@@ -187,8 +220,15 @@
         // Get total score from API response
         const totalScore = totalScoreData.totalScore + EXTRA_SUP_VP;
         
+        // Get and format timestamp for "last updated"
+        const lastUpdatedAt = hasValidData ? daoMembersData.lastUpdatedAt || (Date.now() / 1000) : null;
+        const lastUpdatedDisplay = lastUpdatedAt ? 
+          new Date(lastUpdatedAt * 1000).toLocaleString() : 
+          "Unknown";
+        
         // Build table HTML
         let tableHtml = `
+          <div class="last-updated">Last updated: ${lastUpdatedDisplay}</div>
           <table class="delegation-table">
             <thead>
               <tr>
@@ -216,6 +256,9 @@
         
         // Helper function to create a table row for a DAO member
         function createRow(member, index, cumulativePercent, hasValidData) {
+          // Determine if this row is below threshold (delegate with < VP_CUTOFF total voting power)
+          const isBelowThreshold = member.isDelegate && member.totalVotingPower < VP_CUTOFF;
+          
           // Get member metadata
           const metadata = delegatesMetadata[member.address.toLowerCase()] || { name: '', ens: null, forumThread: null };
           const memberName = member.isDelegate ? metadata.name || '?' : '';
@@ -248,12 +291,23 @@
           const delegatedVotingPowerDisplay = member.isDelegate ? formatNumber(member.delegatedVotingPower) : '';
           const totalVotingPowerDisplay = formatNumber(member.totalVotingPower);
           const nrDelegatorsDisplay = member.isDelegate ? member.nrDelegators : '';
+          
           // Format percentage with 2 decimal places
-          const percentDisplay = percent === 0 ? '0.00%' : `${percent.toFixed(2)}%`;
-          const cumulativePercentDisplay = cumulativePercent === 100 ? '100.00%' : `${cumulativePercent.toFixed(2)}%`;
+          const percentValue = percent.toFixed(2);
+          const percentDisplay = percent === 0 ? '0.00%' : 
+                               percentValue === '0.00' ? '<0.01%' : 
+                               `${percentValue}%`;
+                               
+          const cumulativeValue = cumulativePercent.toFixed(2);
+          const cumulativePercentDisplay = cumulativePercent === 100 ? '100.00%' : 
+                                         cumulativeValue === '0.00' ? '<0.01%' : 
+                                         `${cumulativeValue}%`;
+          
+          // Apply below-threshold class if needed
+          const rowClass = isBelowThreshold ? 'below-threshold' : '';
           
           return `
-            <tr>
+            <tr class="${rowClass}">
               <td>${index + 1}</td>
               <td class="wallet-address">${member.address}</td>
               <td>${memberEns}</td>
@@ -290,7 +344,7 @@
           
           // Add summary row as the first row
           tableHtml += `
-            <tr>
+            <tr class="special-row total-row">
               <td>Total</td>
               <td class="wallet-address"></td>
               <td></td>
@@ -323,7 +377,7 @@
           
           // Add the "Other" row at the end
           tableHtml += `
-            <tr>
+            <tr class="special-row other-row">
               <td>&lt;Other&gt;</td>
               <td class="wallet-address"></td>
               <td></td>
@@ -340,14 +394,12 @@
           `;
           
           // Add timestamp for last updated
-          const lastUpdatedAt = daoMembersData.lastUpdatedAt || (Date.now() / 1000);
           console.log('Last updated:', new Date(lastUpdatedAt * 1000).toISOString());
           console.log('Last updated:', new Date(lastUpdatedAt * 1000).toLocaleString());
           
           tableHtml += `
             </tbody>
           </table>
-          <div class="last-updated">Last updated: ${new Date(lastUpdatedAt * 1000).toLocaleString()}</div>
           `;
         } else {
           // If no valid data, show empty table with message
@@ -357,7 +409,6 @@
             </tr>
             </tbody>
           </table>
-          <div class="last-updated">Last updated: Unknown</div>
           `;
         }
         
