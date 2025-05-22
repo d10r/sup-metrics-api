@@ -113,7 +113,7 @@ export class MetricsController extends Controller {
    * Can be filtered by minimum voting power and to include all delegates regardless of voting power.<br>
    * This is periodically updated in the background. The last update timestamp is returned.
    * 
-   * @param min_vp Minimum voting power threshold (default: 0)
+   * @param min_vp Minimum voting power threshold (default: 10000)
    * @param include_all_delegates Include all delegates regardless of voting power (default: false)
    */
   @Get('/dao_members')
@@ -122,7 +122,7 @@ export class MetricsController extends Controller {
     @Query() include_all_delegates?: string
   ): DaoMembersResponse {
     return getDaoMembersWithFilters(
-      min_vp !== undefined ? Number(min_vp) : 0,
+      min_vp !== undefined ? Number(min_vp) : 10000,
       include_all_delegates === 'true'
     );
   }

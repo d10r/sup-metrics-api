@@ -812,30 +812,34 @@ async function fetchDaoMemberScores(): Promise<Holder[]> {
     const accountToLockerMap: Map<string, string> = new Map();
     
     try {
-      // Prepare all contract calls at once - viem will handle batching internally
-      const contractCalls = uniqueAccountsArray.map(accountAddress => ({
-        address: accountAddress as Address,
-        abi: LOCKER_ABI,
-        functionName: 'lockerOwner',
-        args: []
-      }));
+      // Create an array of promises for each account's lockerOwner call
+      const ownerPromises = uniqueAccountsArray.map(accountAddress => 
+        viemClient.readContract({
+          address: accountAddress as Address,
+          abi: LOCKER_ABI,
+          functionName: 'lockerOwner',
+          args: []
+        }).catch(error => {
+          // Return null for individual failed calls instead of rejecting the whole batch
+          console.debug(`Error fetching lockerOwner for ${accountAddress}: ${error.message}`);
+          return null;
+        })
+      );
       
-      console.log(`Making ${contractCalls.length} contract calls...`);
+      console.log(`Making ${ownerPromises.length} contract calls...`);
       
-      // Let viem handle the batching and execute all calls
-      const results = await viemClient.multicall({
-        contracts: contractCalls as any[] // Type assertion to avoid TypeScript issues
-      });
+      // Use Promise.allSettled instead of Promise.all to handle individual failures
+      const results = await Promise.allSettled(ownerPromises);
       
-      // Log progress indicator for every 1000 calls
+      // Process the results
       for (let i = 0; i < results.length; i++) {
         if ((i + 1) % 1000 === 0) {
           process.stdout.write('.');
         }
         
         const result = results[i];
-        if (result.status === 'success' && result.result) {
-          const owner = result.result as Address;
+        if (result.status === 'fulfilled' && result.value !== null) {
+          const owner = result.value as Address;
           if (owner && owner !== '0x0000000000000000000000000000000000000000') {
             uniqueLockerOwners.add(owner.toLowerCase());
             
