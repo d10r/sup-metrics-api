@@ -107,7 +107,7 @@
         await fetchDelegatesMetadata();
         
         // Fetch DAO members data from the new endpoint
-        const daoMembersResponse = await fetch(`${SUP_METRICS_API_URL}/dao_members`, {
+        const daoMembersResponse = await fetch(`${SUP_METRICS_API_URL}/dao_members?min_vp=100000&include_all_delegates=true`, {
           cache: 'no-store'  // Ensure fresh data
         });
         
@@ -181,17 +181,17 @@
             <thead>
               <tr>
                 <th>#</th>
-                <th>Name</th>
-                <th>Delegate?</th>
-                <th>Delegated To</th>
-                <th>Delegated Wallets</th>
-                <th>Delegated Tokens</th>
-                <th>Own Tokens</th>
-                <th>Total SUP tokens</th>
+                <th>address</th>
+                <th>ENS</th>
+                <th>token balance</th>
+                <th>has delegated?</th>
+                <th>is delegate?</th>
+                <th>delegate name</th>
+                <th>delegated wallets</th>
+                <th>delegated voting power</th>
+                <th>total voting power</th>
                 <th>%</th>
                 <th>cumulative %</th>
-                <th>ENS</th>
-                <th>Address</th>
               </tr>
             </thead>
             <tbody>
@@ -205,8 +205,8 @@
         // Helper function to create a table row for a DAO member
         function createRow(member, index, cumulativePercent, hasValidData) {
           // Get member metadata
-          const metadata = delegatesMetadata[member.address.toLowerCase()] || { name: 'Unknown', ens: null, forumThread: null };
-          const memberName = metadata.name;
+          const metadata = delegatesMetadata[member.address.toLowerCase()] || { name: '', ens: null, forumThread: null };
+          const memberName = member.isDelegate ? metadata.name || '?' : '';
           const forumThread = metadata.forumThread;
           
           // Only display ENS if it contains a dot character
@@ -215,39 +215,39 @@
             memberEns = '';
           }
           
+          // Format name as a link if forum thread is available
+          const nameDisplay = forumThread ? 
+            `<a href="${forumThread}" target="_blank">${memberName}</a>` : 
+            memberName;
+          
           // Check if member has a delegate
-          const delegatedTo = member.hasDelegate ? (delegatesMetadata[member.hasDelegate.toLowerCase()]?.name || truncateAddress(member.hasDelegate)) : '-';
+          const delegatedTo = member.hasDelegate ? "to " +(delegatesMetadata[member.hasDelegate.toLowerCase()]?.name || truncateAddress(member.hasDelegate)) : '';
           
           // Calculate percentage of total
           const percent = (member.totalVotingPower / totalScore) * 100;
           
           // Format values
           const ownVotingPowerDisplay = formatNumber(member.ownVotingPower);
-          const delegatedVotingPowerDisplay = member.isDelegate ? formatNumber(member.delegatedVotingPower) : '-';
+          const delegatedVotingPowerDisplay = member.isDelegate ? formatNumber(member.delegatedVotingPower) : '';
           const totalVotingPowerDisplay = formatNumber(member.totalVotingPower);
-          const nrDelegatorsDisplay = member.isDelegate ? member.nrDelegators : '-';
+          const nrDelegatorsDisplay = member.isDelegate ? member.nrDelegators : '';
           const percentDisplay = percent === 0 ? '0%' : (Math.round(percent) === 0 ? '<1%' : `${Math.round(percent)}%`);
           const cumulativePercentDisplay = cumulativePercent === 100 ? '100%' : (Math.round(cumulativePercent) === 100 ? '>99%' : `${Math.round(cumulativePercent)}%`);
-          
-          // Format name as a link if forum thread is available
-          const nameDisplay = forumThread ? 
-            `<a href="${forumThread}" target="_blank">${memberName}</a>` : 
-            memberName;
           
           return `
             <tr>
               <td>${index + 1}</td>
-              <td>${nameDisplay}</td>
-              <td>${member.isDelegate ? 'Yes' : 'No'}</td>
+              <td class="wallet-address">${member.address}</td>
+              <td>${memberEns}</td>
+              <td>${ownVotingPowerDisplay}</td>
               <td>${member.hasDelegate ? delegatedTo : '-'}</td>
+              <td>${member.isDelegate ? 'Yes' : ''}</td>
+              <td>${nameDisplay}</td>
               <td>${nrDelegatorsDisplay}</td>
               <td>${delegatedVotingPowerDisplay}</td>
-              <td>${ownVotingPowerDisplay}</td>
               <td>${totalVotingPowerDisplay}</td>
               <td>${percentDisplay}</td>
               <td>${cumulativePercentDisplay}</td>
-              <td>${memberEns}</td>
-              <td class="wallet-address">${member.address}</td>
             </tr>
           `;
         }
