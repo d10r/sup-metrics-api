@@ -341,12 +341,15 @@
             }
             sumOfDisplayedOwnVotingPower += member.ownVotingPower;
           });
+
+          const totalMembersCount = daoMembersData.totalMembersCount || 0;
+          const displayedMembersCount = processedMembers.length;
           
           // Add summary row as the first row
           tableHtml += `
             <tr class="special-row total-row">
               <td>Total</td>
-              <td class="wallet-address"></td>
+              <td class="wallet-address">${totalMembersCount} addresses</td>
               <td></td>
               <td>${formatNumber(totalScore)}</td>
               <td>${totalDelegatedWallets}</td>
@@ -379,7 +382,7 @@
           tableHtml += `
             <tr class="special-row other-row">
               <td>&lt;Other&gt;</td>
-              <td class="wallet-address"></td>
+              <td class="wallet-address">${totalMembersCount - displayedMembersCount} addresses</td>
               <td></td>
               <td>${formatNumber(remainingVotingPower)}</td>
               <td></td>

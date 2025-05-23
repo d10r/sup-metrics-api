@@ -108,6 +108,7 @@ export interface DelegateInfo {
 }
 
 export interface DaoMembersResponse {
+  totalMembersCount: number;
   daoMembers: DaoMember[];
   lastUpdatedAt: number;
 } 

@@ -397,6 +397,7 @@ export const getDaoMembersWithFilters = (
   });
   
   return {
+    totalMembersCount: daoMembers.length,
     daoMembers: filteredMembers,
     lastUpdatedAt
   };
