@@ -260,14 +260,18 @@
           const isBelowThreshold = member.isDelegate && member.totalVotingPower < VP_CUTOFF;
           
           // Get member metadata
-          const metadata = delegatesMetadata[member.address.toLowerCase()] || { name: '', ens: null, forumThread: null };
-          const memberName = member.isDelegate ? metadata.name || '?' : '';
-          const forumThread = metadata.forumThread;
-          
-          // Only display ENS if it contains a dot character
-          let memberEns = metadata.ens || '';
-          if (!memberEns.includes('.')) {
-            memberEns = '';
+          const metadata = delegatesMetadata[member.address.toLowerCase()];// || { name: '', ens: null, forumThread: null };
+          console.log(`Metadata for ${member.address}:`, metadata);
+          // if we have metadata, we consider the account a delegate, even if it doesn't yet have delegations in place
+          member.isDelegate = member.isDelegate || metadata !== undefined;
+
+          const memberName = member.isDelegate ? metadata?.name || '?' : '';
+          const forumThread = metadata?.forumThread;
+
+          // Only display ENS if it contains a dot character (because the table contains addresses too where no ENS is available)
+          let memberEns = '';
+          if (metadata?.ens?.includes('.')) {
+            memberEns = metadata.ens;
           }
           
           // Format delegate name with link if available
