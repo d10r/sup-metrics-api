@@ -259,9 +259,7 @@
           // Determine if this row is below threshold (delegate with < VP_CUTOFF total voting power)
           const isBelowThreshold = member.isDelegate && member.totalVotingPower < VP_CUTOFF;
           
-          // Get member metadata
           const metadata = delegatesMetadata[member.address.toLowerCase()];// || { name: '', ens: null, forumThread: null };
-          console.log(`Metadata for ${member.address}:`, metadata);
           // if we have metadata, we consider the account a delegate, even if it doesn't yet have delegations in place
           member.isDelegate = member.isDelegate || metadata !== undefined;
 
@@ -321,8 +319,8 @@
               <td>${nameDisplay}</td>
               <td>${nrDelegatorsDisplay}</td>
               <td>${delegatedVotingPowerDisplay}</td>
-              <td>${totalVotingPowerDisplay}</td>
-              <td>${percentDisplay}</td>
+              <td>${member.hasDelegate ? '(' + totalVotingPowerDisplay + ')' : totalVotingPowerDisplay}</td>
+              <td>${member.hasDelegate ? '(' + percentDisplay + ')' : percentDisplay}</td>
               <td>${cumulativePercentDisplay}</td>
             </tr>
           `;
@@ -335,6 +333,8 @@
           let totalDelegatedVotingPower = 0;
           let numberOfDelegates = 0;
           let sumOfDisplayedOwnVotingPower = 0;
+          let tokenSum = 0;
+          let nonDelegatedTotalVPSum = 0;
           
           // Calculate totals for summary row
           processedMembers.forEach(member => {
@@ -343,6 +343,15 @@
               totalDelegatedVotingPower += member.delegatedVotingPower;
               numberOfDelegates++;
             }
+
+            // Update calculation logic for non-bracketed values:
+            // Only include totalVotingPower in sum if the member has NOT delegated
+            if (!member.hasDelegate) {
+              nonDelegatedTotalVPSum += member.totalVotingPower;
+            }
+
+            // Sum all own voting power regardless of delegation status
+            tokenSum += member.ownVotingPower;
             sumOfDisplayedOwnVotingPower += member.ownVotingPower;
           });
 
@@ -370,17 +379,17 @@
           // Add the regular rows
           processedMembers.forEach((member, index) => {
             seenAddresses.add(member.address.toLowerCase());
-            
-            // Calculate percentage and cumulative percentage
             const percent = (member.totalVotingPower / totalScore) * 100;
-            cumulativePercent += percent;
-            
+            if (!member.hasDelegate) {
+              cumulativePercent += percent;
+            }
             tableHtml += createRow(member, index, cumulativePercent, true);
           });
 
           // Calculate remaining voting power (accounts not meeting the criteria)
-          const remainingVotingPower = Math.max(0, totalScore - sumOfDisplayedOwnVotingPower - totalDelegatedVotingPower);
-          const remainingPercent = (remainingVotingPower / totalScore) * 100;
+          const remainingToken = Math.max(0, totalScore - sumOfDisplayedOwnVotingPower);
+          const remainingTotal = Math.max(0, totalScore - nonDelegatedTotalVPSum);
+          const remainingPercent = (remainingTotal / totalScore) * 100;
           
           // Add the "Other" row at the end
           tableHtml += `
@@ -388,23 +397,16 @@
               <td>&lt;Other&gt;</td>
               <td class="wallet-address">${totalMembersCount - displayedMembersCount} addresses</td>
               <td></td>
-              <td>${formatNumber(remainingVotingPower)}</td>
+              <td>${formatNumber(remainingToken)}</td>
               <td></td>
               <td></td>
               <td></td>
               <td></td>
               <td></td>
-              <td>${formatNumber(remainingVotingPower)}</td>
+              <td>${formatNumber(remainingTotal)}</td>
               <td>${remainingPercent.toFixed(2)}%</td>
               <td>100.00%</td>
             </tr>
-          `;
-          
-          // Add timestamp for last updated
-          console.log('Last updated:', new Date(lastUpdatedAt * 1000).toISOString());
-          console.log('Last updated:', new Date(lastUpdatedAt * 1000).toLocaleString());
-          
-          tableHtml += `
             </tbody>
           </table>
           `;
