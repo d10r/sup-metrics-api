@@ -107,7 +107,7 @@ class MetricManager<T> {
         }, null, 2)
       );
     } catch (error) {
-      console.error(`Error saving to ${this.state.filePath}:`, error);
+      console.error(`### Error saving to ${this.state.filePath}:`, error);
     }
   }
 
@@ -125,7 +125,7 @@ class MetricManager<T> {
         return true;
       }
     } catch (error) {
-      console.error(`Error loading from ${this.state.filePath}:`, error);
+      console.error(`### Error loading from ${this.state.filePath}:`, error);
     }
     return false;
   }
@@ -165,6 +165,7 @@ class MetricManager<T> {
       this.update(true);
     }
 
+    console.log(`Setting up periodic updates for ${this.state.filePath} with interval ${this.intervalSec} seconds`);
     // Setup interval for future updates
     const intervalId = setInterval(() => {
       this.update(false);
@@ -248,26 +249,33 @@ async function fetchTotalDelegatedScore(): Promise<{
     await loadSpaceConfig();
   }
 
-  const delegations = await queryAllPages(
-    (lastId) => `{
-      delegations(
-        first: 1000,
-        where: {
-          space: "${config.snapshotSpace}",
-          id_gt: "${lastId}"
-        },
-        orderBy: id,
-        orderDirection: asc
-      ) {
-        id
-        delegator
-        delegate
-      }
-    }`,
-    (res) => res.data.data.delegations,
-    (item) => item,
-    `https://gateway.thegraph.com/api/${config.graphNetworkApiKey}/subgraphs/id/${config.delegationSubgraphId}`
-  );
+  let delegations: any[] = [];
+
+  try {
+    const delegations = await queryAllPages(
+      (lastId) => `{
+        delegations(
+          first: 1000,
+          where: {
+            space: "${config.snapshotSpace}",
+            id_gt: "${lastId}"
+          },
+          orderBy: id,
+          orderDirection: asc
+        ) {
+          id
+          delegator
+          delegate
+        }
+      }`,
+      (res) => res.data.data.delegations,
+      (item) => item,
+      `https://gateway.thegraph.com/api/${config.graphNetworkApiKey}/subgraphs/id/${config.delegationSubgraphId}`
+    );
+  } catch (error) {
+    console.error(formatAxiosError(error, 'Error fetching delegations'));
+    throw new Error('Error fetching delegations from subgraph');
+  }
 
   //console.log(`subgraph url: https://gateway.thegraph.com/api/${config.graphNetworkApiKey}/subgraphs/id/${config.delegationSubgraphId}`);
 
@@ -437,7 +445,7 @@ async function queryAllPages<T>(
   const pageSize = 1000;
 
   while (true) {
-    console.log(`querying page ${lastId}`);
+    //console.log(`querying page ${lastId}`);
     const response = await axios.post(graphqlEndpoint, {
       query: queryFn(lastId)
     });
@@ -462,6 +470,36 @@ async function queryAllPages<T>(
   }
 
   return items;
+}
+
+// Helper function to format axios errors
+function formatAxiosError(error: unknown, context: string): string {
+  if (axios.isAxiosError(error)) {
+    const status = error.response?.status;
+    const statusText = error.response?.statusText;
+    const data = error.response?.data;
+    const message = error.message;
+    
+    let errorMsg = `${context}: `;
+    if (status) {
+      errorMsg += `[${status}] `;
+    }
+    if (statusText) {
+      errorMsg += `${statusText} - `;
+    }
+    if (data) {
+      // If data is an object, stringify it
+      const dataStr = typeof data === 'object' ? JSON.stringify(data) : data;
+      errorMsg += `Response: ${dataStr} `;
+    }
+    // Add the error message if it provides additional information
+    if (message && !errorMsg.includes(message)) {
+      errorMsg += `(${message})`;
+    }
+    return errorMsg;
+  }
+  // For non-axios errors, return the error as a string
+  return `${context}: ${error}`;
 }
 
 export const loadSpaceConfig = async () => {
@@ -505,7 +543,7 @@ export const loadSpaceConfig = async () => {
 
     console.log(`** Loaded space config for ${config.snapshotSpace}: ${JSON.stringify(spaceConfig, null, 2)}`);
   } catch (error) {
-    console.error('Error loading space config:', error);
+    console.error(formatAxiosError(error, 'Error loading space config'));
     throw error;
   }
 };
@@ -546,11 +584,7 @@ export const getVotingPower = async (address: string): Promise<VotingPower> => {
       delegated: 0
     };
   } catch (error) {
-    if (axios.isAxiosError(error)) {
-      console.error(`Error fetching voting power for ${address}: ${error.response?.status} ${error.response?.statusText}`);
-    } else {
-      console.error(`Error fetching voting power for ${address}: ${error}`);
-    }
+    console.error(formatAxiosError(error, `Error fetching voting power for ${address}`));
     throw error;
   }
 };
@@ -588,7 +622,7 @@ export const getAccountVotingPower = async (accountAddress: string, useOwnStrate
     
     return vp.vp || 0; // Return voting power or 0 if undefined
   } catch (error) {
-    console.error(`Error fetching voting power for ${accountAddress}:`, error);
+    console.error(`### Error fetching voting power for ${accountAddress}:`, error);
     return 0; // Return 0 on error
   }
 };
@@ -612,11 +646,7 @@ export const getDelegateForUser = async (address: string): Promise<string | null
     const delegations = response.data.data.delegations;
     return delegations.length > 0 ? delegations[0].delegate : null;
   } catch (error) {
-    if (axios.isAxiosError(error)) {
-      console.error(`Error fetching delegate for ${address}: ${error.response?.status} ${error.response?.statusText}`);
-    } else {
-      console.error(`Error fetching delegate for ${address}: ${error}`);
-    }
+    console.error(formatAxiosError(error, `Error fetching delegate for ${address}`));
     throw error;
   }
 };
@@ -649,7 +679,7 @@ export const getTotalScore = async (): Promise<TotalScoreResponse> => {
     
     console.log(`Found ${events.length} flow distribution events`);
     // log full detail
-    console.log(JSON.stringify(response.data.data, null, 2));
+//    console.log(JSON.stringify(response.data.data, null, 2));
     
     // Create a Map to store unique pools by ID
     const uniquePools = new Map();
@@ -693,11 +723,7 @@ export const getTotalScore = async (): Promise<TotalScoreResponse> => {
       lastUpdatedAt: currentTimestamp
     };
   } catch (error) {
-    if (axios.isAxiosError(error)) {
-      console.error(`Error fetching total score: ${error.response?.status} ${error.response?.statusText}`);
-    } else {
-      console.error(`Error fetching total score: ${error}`);
-    }
+    console.error(formatAxiosError(error, 'Error fetching total score'));
     throw error;
   }
 };
@@ -790,7 +816,7 @@ async function fetchDaoMemberScores(): Promise<Holder[]> {
           }
         }
       } catch (error) {
-        console.error(`Error fetching members for pool ${poolId}:`, error);
+        console.error(formatAxiosError(error, `Error fetching members for pool ${poolId}`));
         // Continue with the next pool even if there's an error
       }
     }
@@ -822,7 +848,7 @@ async function fetchDaoMemberScores(): Promise<Holder[]> {
           args: []
         }).catch(error => {
           // Return null for individual failed calls instead of rejecting the whole batch
-          console.debug(`Error fetching lockerOwner for ${accountAddress}: ${error.message}`);
+          console.debug(`### Error fetching lockerOwner for ${accountAddress}: ${error.message}`);
           return null;
         })
       );
@@ -856,7 +882,7 @@ async function fetchDaoMemberScores(): Promise<Holder[]> {
       }
       
     } catch (error) {
-      console.error(`Error fetching locker owners:`, error);
+      console.error(`### Error fetching locker owners:`, error);
       failedCount = uniqueAccountsArray.length - successCount;
     }
     
@@ -921,16 +947,12 @@ async function fetchDaoMemberScores(): Promise<Holder[]> {
     // Sort holders by amount (voting power) in descending order
     holdersWithVP.sort((a, b) => b.amount - a.amount);
 
-    // get all holders with more than 10k voting power
-    const holdersWithVPMoreThan10k = holdersWithVP.filter(holder => holder.amount > 10000);
-    console.log(`Found ${holdersWithVPMoreThan10k.length} holders with more than 10k voting power`);
-    console.log(JSON.stringify(holdersWithVPMoreThan10k, null, 2));
+    console.log(`Found ${holdersWithVP.length} DAO members (${holdersWithVP.filter(holder => holder.amount > 10000).length} with more than 10k voting power)`);
     
-    // Return the holders with voting power
     return holdersWithVP;
 
   } catch (error) {
-    console.error(`Error fetching member scores: ${error}`);
+    console.error(formatAxiosError(error, 'Error fetching member scores'));
     throw error;
   }
 }
@@ -957,7 +979,7 @@ export const getVotingPowerViaRpc = async (accountAddress: string, lockerAddress
     
     return balanceNumber;
   } catch (error) {
-    console.error(`Error getting voting power via RPC for ${accountAddress}:`, error);
+    console.error(`### Error getting voting power via RPC for ${accountAddress}:`, error);
     return 0;
   }
 };
