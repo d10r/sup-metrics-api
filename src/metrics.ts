@@ -581,7 +581,7 @@ export const getVotingPower = async (address: string): Promise<VotingPower> => {
       const ownVp = response.data.result.vp_by_strategy[0];
       const delegatedVp = response.data.result.vp_by_strategy[1];
       console.log(`Voting power for ${address}: ${totalVp} (delegated: ${delegatedVp}, own: ${ownVp})`);
-      console.log(`Voting power raw for ${address}: ${JSON.stringify(response.data.result, null, 2)}`);
+      //console.log(`Voting power raw for ${address}: ${JSON.stringify(response.data.result, null, 2)}`);
       return {
         total: totalVp,
         delegated: delegatedVp
