@@ -252,7 +252,7 @@ async function fetchTotalDelegatedScore(): Promise<{
   let delegations: any[] = [];
 
   try {
-    const delegations = await queryAllPages(
+    delegations = await queryAllPages(
       (lastId) => `{
         delegations(
           first: 1000,
@@ -272,17 +272,19 @@ async function fetchTotalDelegatedScore(): Promise<{
       (item) => item,
       `https://gateway.thegraph.com/api/${config.graphNetworkApiKey}/subgraphs/id/${config.delegationSubgraphId}`
     );
+
+    console.log(`Successfully fetched ${delegations.length} delegations`);
   } catch (error) {
-    console.error(formatAxiosError(error, 'Error fetching delegations'));
-    throw new Error('Error fetching delegations from subgraph');
+    const errorMsg = formatAxiosError(error, 'Error fetching delegations from subgraph');
+    //console.error(errorMsg);
+    throw new Error(`Failed to fetch delegations: ${errorMsg}`);
   }
 
-  //console.log(`subgraph url: https://gateway.thegraph.com/api/${config.graphNetworkApiKey}/subgraphs/id/${config.delegationSubgraphId}`);
 
+  console.log(`Processing ${delegations.length} delegations...`);
+  
   // Store delegator->delegate mapping
   const delegatorMap: Record<string, string> = {};
-  // log delegations
-  //console.log(`delegations: ${JSON.stringify(delegations.slice(0, 10), null, 2)}, ...`);
   for (const delegation of delegations) {
     delegatorMap[delegation.delegator.toLowerCase()] = delegation.delegate.toLowerCase();
   }
@@ -292,7 +294,6 @@ async function fetchTotalDelegatedScore(): Promise<{
     counts[delegation.delegate.toLowerCase()] = (counts[delegation.delegate.toLowerCase()] || 0) + 1;
     return counts;
   }, {});
-  //console.log(`delegate counts: ${JSON.stringify(delegateCounts, null, 2)}`);
 
   // Get unique delegate addresses
   const delegateAddresses = Object.keys(delegateCounts);
@@ -302,23 +303,30 @@ async function fetchTotalDelegatedScore(): Promise<{
   const perDelegateScore: AddressScore[] = [];
 
   for (const address of delegateAddresses) {
-    const votingPower = await getVotingPower(address);
-    totalScore += votingPower.total;
-    perDelegateScore.push({
-      address,
-      score: votingPower.total,
-      delegatedScore: votingPower.delegated,
-      nrDelegations: delegateCounts[address]
-    });
-    process.stdout.write(".");
+    try {
+      const votingPower = await getVotingPower(address);
+      totalScore += votingPower.total;
+      perDelegateScore.push({
+        address,
+        score: votingPower.total,
+        delegatedScore: votingPower.delegated,
+        nrDelegations: delegateCounts[address]
+      });
+      process.stdout.write(".");
+    } catch (error) {
+      // If any delegate's voting power check fails, abort the entire update
+      //console.error(`Failed to get voting power for delegate ${address}: ${error}`);
+      throw new Error(`Failed to get voting power for delegate ${address} - aborting update`);
+    }
+    
     // throttle requests to the scores API
     await new Promise(resolve => setTimeout(resolve, 5000));
     if (process.env.STOP_EARLY) {
       break;
     }
   }
-
-  console.log(`Total delegated score: ${totalScore}`);
+  
+  console.log(`\nTotal delegated score: ${totalScore}`);
   return { totalScore, perDelegateScore, delegatorMap };
 }
 
