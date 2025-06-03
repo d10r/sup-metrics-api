@@ -5,9 +5,11 @@ dotenv.config();
 export const config = {
   tokenAddress: process.env.TOKEN_ADDRESS || '',
   lockerFactoryAddress: process.env.LOCKER_FACTORY_ADDRESS || '',
+  asupAddress: process.env.ASUP_ADDRESS || '',
   rpcUrl: process.env.RPC_URL || '',
   epProgramManager: process.env.EP_PROGRAM_MANAGER || '',
   graphNetworkApiKey: process.env.GRAPH_NETWORK_API_KEY || '',
+  graphMarketApiToken: process.env.GRAPH_MARKET_API_TOKEN || '',
   sfSubgraphUrl: process.env.SF_SUBGRAPH_URL || '',
   delegationSubgraphId: process.env.DELEGATION_SUBGRAPH_ID || '',
   delegationContractAddress: process.env.DELEGATION_CONTRACT_ADDRESS || '',

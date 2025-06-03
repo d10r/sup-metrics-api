@@ -16,6 +16,7 @@ import {
   DaoMembersResponse
 } from './types'; 
 import snapshot from '@snapshot-labs/snapshot.js';
+import snapshotStrategies from '@d10r/snapshot-strategies';
 
 // File paths for metric data
 const DATA_DIR = './data';
@@ -138,7 +139,7 @@ class MetricManager<T> {
       if (loaded) {
         const now = Math.floor(Date.now() / 1000);
         const dataAge = now - this.state.lastUpdatedAt;
-        if (dataAge < this.intervalSec) {
+        if (this.intervalSec > 0 && dataAge < this.intervalSec) {
           console.log(`Using cached data (${dataAge}s old)`);
           return; // Data is fresh enough
         }
@@ -160,19 +161,21 @@ class MetricManager<T> {
 
   // Setup periodic updates
   setupPeriodicUpdates(): () => void {
-    // First run with bootstrapping
-    if (!process.env.SKIP_INITIAL_UPDATE) {
-      this.update(true);
-    }
-
-    console.log(`Setting up periodic updates for ${this.state.filePath} with interval ${this.intervalSec} seconds`);
     // Setup interval for future updates
-    const intervalId = setInterval(() => {
-      this.update(false);
-    }, this.intervalSec * 1000);
-
-    // Return a function to stop the updates
-    return () => clearInterval(intervalId);
+    if (this.intervalSec > 0) {
+      console.log(`Setting up periodic updates for ${this.state.filePath} with interval ${this.intervalSec} seconds`);
+      // First run with bootstrapping
+      if (!process.env.SKIP_INITIAL_UPDATE) {
+        this.update(true);
+      }
+      
+      const intervalId = setInterval(() => {
+        this.update(false);
+      }, this.intervalSec * 1000);
+      // Return a function to stop the updates
+      return () => clearInterval(intervalId); 
+    }
+    return () => {};
   }
 }
 
@@ -556,6 +559,59 @@ export const loadSpaceConfig = async () => {
   }
 };
 
+// gets voting power for a list of addresses by local running the snapshot strategy set up for the space
+// the returned array contains the voting power for each address in the same order as the input addresses
+export const getVotingPowerBatch = async (addresses: string[]): Promise<VotingPower[]> => {
+  if (!spaceConfig) {
+    await loadSpaceConfig();
+  }
+  
+  try {
+    const scores = await snapshotStrategies.utils.getScoresDirect(
+      config.snapshotSpace, // space
+      spaceConfig!.strategies, // strategies
+      spaceConfig!.network, // network
+      viemClient, // provider
+      addresses, // addresses
+      'latest' // snapshot?
+    );
+    //console.log(`Scores for ${addresses}: ${JSON.stringify(scores, null, 2)}`);
+
+    // Process the scores according to the required format
+    const result: VotingPower[] = addresses.map(address => {
+      const addressLower = address.toLowerCase();
+      let total = 0;
+      let delegated = 0;
+      
+      // Sum values across all score objects for total
+      scores.forEach((scoreObj, index) => {
+        // TypeScript fix: properly type the score object as Record<string, number>
+        const typedScoreObj = scoreObj as Record<string, number>;
+        
+        if (typedScoreObj[addressLower] !== undefined) {
+          total += typedScoreObj[addressLower];
+          
+          // Extract delegated score from the second scoring strategy (index 1)
+          if (index === 1) {
+            delegated = typedScoreObj[addressLower];
+          }
+        }
+      });
+      
+      //console.log(`Voting power for ${address}: ${total} (delegated: ${delegated})`);
+      return {
+        total,
+        delegated
+      };
+    });
+
+    return result;
+  } catch (error) {
+    console.error(formatAxiosError(error, 'Error fetching voting power for batch'));
+    throw error;
+  }
+}
+
 export const getVotingPower = async (address: string): Promise<VotingPower> => {
   if (!spaceConfig) {
     await loadSpaceConfig();
@@ -744,7 +800,60 @@ async function fetchDaoMemberScores(): Promise<Holder[]> {
   try {
     const currentTimestamp = Math.floor(Date.now() / 1000);
     console.log(`Current timestamp: ${currentTimestamp}`);
+
+    // Create holders array with the results
+    const holdersWithVP: Holder[] = [];
+
+
+    // we start by getting the voting power for the aSUP holders
+    // TODO: remove once distributed
+    const asupHolders = [
+      "0xa6c49067919d92d5db655af190111d480ee1b9a4",
+      "0x84A1C94DE422cd1a8dC6D8cb819f57403fB93D58",
+      "0xec06C4577aA7C4E3AbEAfC6a7cb0e2Da7b61ED49",
+      "0x91323bB42e717c6096144bA7E23fFC66d7661f5d",
+      "0xCF7D9886C8D391e730897FaF878a30214DB23A15",
+      "0x8Ddb7393F5b9C78D7dE403e4DC1D9d93691d02ED",
+      "0x452c996798B65EeAA61B493a0B25bceDdcB17Ec1",
+      "0xdB2Ed12cEc14128BCBED76Ae1eDc2E6bBC529A8F",
+      "0x16e5AD2F9697Caf4B0F0deB25FF1121a01cBD2c7",
+      "0x1e798ce592BE5069e8E773C54F9C12d3583cDC68",
+      "0x0810b584EbA735AdeA46EBEcDfbe36346DAab0B5",
+      "0xd901a220cc48a9d92f69006ab762d7be587d617c",
+      "0x6f7C780FCc169fF1Fab3a99c8c056CAd3e5E69aA",
+      "0x07A14B1Ac8b84aAB9438AFe4CF5965D116d62941",
+      "0xc94cb528766F3A5913eB73371A655c7000C07d65",
+      "0x9d07E3406D3E7eC5E19B6804f6f821F684C9339c",
+      "0x7380C1eD753AD1626Bf8F3d7d445F5525A2F773b",
+      "0x2846aC90AA940998082E4A618139D247Ab2e71f2",
+      "0x01D452b18dE861806b9A426b2Cd01Dfd4d8879dA",
+      "0x6536C85a50e18860fF1D2FFEbF5537EC18aadFa3",
+      "0x3E7c4E57A1dc4dD4bBE81bEFBe3E437f69619DaB",
+      "0x5E00c69e0e5BF737214172662a22bC0D3D907fae",
+      "0x86E5E52d21c2f535148d9cE0ff9f95447E564CCd",
+      "0xF0Ee64172B8dd8217d55447025C4bEB39B6F34A7",
+      "0x2538De1B9c5Bc4ACCb26B2aB66E775Fe311D8a73",
+      "0x768Cd626DE337f559d2B40c1E9826917a0b0ba57",
+      "0x3a3eE61F7c6e1994a2001762250A5E17B2061b6d",
+      "0xf0D6999725115E3EAd3D927Eb3329D63AFAEC09b",
+      "0x20503760363657E55dC817a5Bc92d297cDeFaa12",
+      "0xF191De80836Fc3878462DfcC06C90769823C7602",
+      "0x347dc91A32bc00e6FB38e2B4380E6A1c0Fbca254",
+      "0x6B2699439907DBBC44e7524118169BEE01341A34"
+    ].map(holder => holder.toLowerCase());
+
+    const asupVotingPowers = await getVotingPowerBatch(asupHolders);
+    //console.log(`ASUP voting power: ${JSON.stringify(asupVotingPowers, null, 2)}`);
+
+    console.log(`Adding ${asupVotingPowers.length} aSUP holders to the holdersWithVP array`);
     
+    asupVotingPowers.forEach((votingPower, index) => {
+      holdersWithVP.push({
+        address: asupHolders[index],
+        amount: votingPower.total
+      });
+    });
+
     const query = `
       query {
         flowDistributionUpdatedEvents(
@@ -758,7 +867,7 @@ async function fetchDaoMemberScores(): Promise<Holder[]> {
     `;
 
     const response = await axios.post(config.sfSubgraphUrl, { query });
-    const events = response.data.data.flowDistributionUpdatedEvents;
+    const events = response.data.data.flowDistributionUpdatedEvents;//.slice(0,0);
     
     console.log(`Found ${events.length} flow distribution events`);
     //console.log(JSON.stringify(response.data.data, null, 2));
@@ -927,9 +1036,6 @@ async function fetchDaoMemberScores(): Promise<Holder[]> {
       balances = new Array(ownerAddresses.length).fill(BigInt(0)); // Fill with zeros on error
     }
     
-    // Create holders array with the results
-    const holdersWithVP: Holder[] = [];
-    
     for (let i = 0; i < ownerAddresses.length; i++) {
       const ownerAddress = ownerAddresses[i];
       const balance = balances[i];
@@ -946,7 +1052,7 @@ async function fetchDaoMemberScores(): Promise<Holder[]> {
       
       // Log every 50th balance for monitoring
       if (i % 50 === 0 || i === ownerAddresses.length - 1) {
-        console.log(`Balance for ${ownerAddress}: ${balanceNumber}`);
+        console.log(`sample: Balance for ${ownerAddress}: ${balanceNumber}`);
       }
     }
     
