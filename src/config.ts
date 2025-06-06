@@ -6,6 +6,7 @@ export const config = {
   tokenAddress: process.env.TOKEN_ADDRESS || '',
   lockerFactoryAddress: process.env.LOCKER_FACTORY_ADDRESS || '',
   asupAddress: process.env.ASUP_ADDRESS || '',
+  additionalTotalScore: process.env.ADDITIONAL_TOTAL_SCORE || '0',
   rpcUrl: process.env.RPC_URL || '',
   epProgramManager: process.env.EP_PROGRAM_MANAGER || '',
   graphNetworkApiKey: process.env.GRAPH_NETWORK_API_KEY || '',
@@ -17,9 +18,10 @@ export const config = {
   snapshotScoreUrl: process.env.SNAPSHOT_SCORE_URL || '',
   snapshotSpace: process.env.SNAPSHOT_SPACE || '',
   port: parseInt(process.env.PORT || '3000', 10),
-  daoMembersCountUpdateInterval: parseInt(process.env.DAO_MEMBERS_COUNT_UPDATE_INTERVAL || '86400', 10),
   totalDelegatedScoreUpdateInterval: parseInt(process.env.TOTAL_DELEGATED_SCORE_UPDATE_INTERVAL || '86400', 10),
   memberScoresUpdateInterval: parseInt(process.env.MEMBER_SCORES_UPDATE_INTERVAL || '86400', 10),
+  scoresUpdateInterval: parseInt(process.env.SCORES_UPDATE_INTERVAL || '86400', 10),
+  vpCalcChunkSize: parseInt(process.env.VP_CALC_CHUNK_SIZE || '5000', 10),
 }; 
 
 export const stringToBytes32 = (str: string) => {

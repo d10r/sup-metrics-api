@@ -70,13 +70,6 @@ export interface ConfigResponse {
   snapshotHubUrl: string;
 }
 
-export interface Holder {
-  address: string;
-  amount: number;
-  locker?: string;
-  delegate?: string;
-}
-
 /**
  * Response for total score endpoint
  */
@@ -90,6 +83,7 @@ export interface TotalScoreResponse {
 }
 
 export interface VotingPower {
+  address: string;
   total: number;
   delegated: number;
 }

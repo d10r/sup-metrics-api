@@ -2,7 +2,6 @@ import express from 'express';
 import cors from 'cors';
 import swaggerUi from 'swagger-ui-express';
 import { config } from './config';
-import { setupMetricsUpdates } from './metrics';
 import { RegisterRoutes } from './routes';
 
 const app = express();
@@ -36,9 +35,6 @@ app.use(function errorHandler(err: any, req: express.Request, res: express.Respo
   console.error(err);
   return res.status(500).json({ error: 'Internal server error' });
 });
-
-// Setup all metrics updates with a single call
-setupMetricsUpdates();
 
 app.listen(config.port, () => {
   console.log(`Server running on port ${config.port}`);
