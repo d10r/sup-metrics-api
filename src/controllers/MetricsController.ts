@@ -98,10 +98,12 @@ export class MetricsController extends Controller {
    * 
    * This calculates the total amount distributed across all pools managed by the EP Program Manager.<br>
    * It is derived by querying the Superfluid subgraph for flow distribution events and calculating<br>
-   * the current total based on flow rates and elapsed time.
+   * the current total based on flow rates and elapsed time.<br><br>
+   * 
+   * This metrics is periodically updated in the background. The last update timestamp is returned.
    */
   @Get('/total_score')
-  public async getTotalScore(): Promise<TotalScoreResponse> {
+  public getTotalScore(): TotalScoreResponse {
     return getTotalScore();
   }
 

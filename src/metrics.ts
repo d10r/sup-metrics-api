@@ -18,7 +18,7 @@ import * as ethersProviders from '@ethersproject/providers';
 
 // File paths for metric data
 const DATA_DIR = './data';
-const FILE_SCHEMA_VERSION = 3;
+const FILE_SCHEMA_VERSION = 4;
 
 // Setup viem client with batching support
 const viemClient = createPublicClient({
@@ -49,10 +49,19 @@ interface MemberData {
   locker?: string;
 }
 
+interface TotalScoreData {
+  totalScore: number;
+  poolCount: number;
+  additionalTotalScore: number;
+}
+
 interface UnifiedScores {
   schemaVersion: number;
   lastUpdatedAt: number;
-  data: Record<string, MemberData>;
+  data: {
+    members: Record<string, MemberData>;
+    totalScore: TotalScoreData;
+  };
 }
 
 interface VotingPower2 {
@@ -223,7 +232,7 @@ class MetricManager<T> {
 
 // Create unified score manager instance
 const unifiedScoresManager = new MetricManager<UnifiedScores>(
-  { schemaVersion: FILE_SCHEMA_VERSION, lastUpdatedAt: 0, data: {} },
+  { schemaVersion: FILE_SCHEMA_VERSION, lastUpdatedAt: 0, data: { members: {}, totalScore: {} as TotalScoreData } },
   fetchUnifiedScores,
   'unifiedScores.json',
   config.scoresUpdateInterval
@@ -298,7 +307,7 @@ const getSpaceConfig = async (): Promise<SpaceConfig> => {
 export const getDaoMembersCount = (): DaoMembersCountResponse => {
   const { data: unifiedData, lastUpdatedAt } = unifiedScoresManager.getData();
   return {
-    daoMembersCount: Object.keys(unifiedData.data).length,
+    daoMembersCount: Object.keys(unifiedData.data.members).length,
     lastUpdatedAt
   };
 };
@@ -307,13 +316,13 @@ export const getTotalDelegatedScore = (): TotalDelegatedScoreResponse => {
   const { data: unifiedData, lastUpdatedAt } = unifiedScoresManager.getData();
   
   // Calculate total delegated score by summing all delegatedVp
-  const totalDelegatedScore = Object.values(unifiedData.data).reduce(
+  const totalDelegatedScore = Object.values(unifiedData.data.members).reduce(
     (sum, member) => sum + (member.delegatedVp || 0),
     0
   );
 
   // Convert to per-delegate format
-  const perDelegateScore = Object.entries(unifiedData.data)
+  const perDelegateScore = Object.entries(unifiedData.data.members)
     .filter(([_, member]) => member.delegatedVp && member.delegatedVp > 0)
     .map(([address, member]) => ({
       address,
@@ -335,7 +344,7 @@ export const getDaoMembers = (): DaoMember[] => {
   const { data: unifiedData, lastUpdatedAt } = unifiedScoresManager.getData();
   
   // Convert to required format
-  const daoMembers = Object.entries(unifiedData.data).map(([address, data]) => {
+  const daoMembers = Object.entries(unifiedData.data.members).map(([address, data]) => {
     const member = {
       address,
       locker: data.locker || null,
@@ -624,11 +633,36 @@ export const getDelegateForUser = async (address: string): Promise<string | null
 
 /**
  * Gets the total score calculated from flow distributions for pools managed by EP Program Manager
+ * Now uses cached data from the unified scores manager
  */
-export const getTotalScore = async (): Promise<TotalScoreResponse> => {
+export const getTotalScore = (): TotalScoreResponse => {
+  const { data: unifiedData, lastUpdatedAt } = unifiedScoresManager.getData();
+  
+  return {
+    totalScore: unifiedData.data.totalScore.totalScore,
+    lastUpdatedAt
+  };
+};
+
+
+function _viemClientToEthersV5Provider(client: Client<Transport, Chain>): ethersProviders.Provider {
+  return new ethersProviders.StaticJsonRpcProvider(
+    {
+      url: client.transport.url,
+      timeout: 25000,
+      allowGzip: true
+    },
+    client.chain.id
+  );
+}
+
+/**
+ * Calculates the total score from flow distributions for pools managed by EP Program Manager
+ */
+async function calculateTotalScore(): Promise<TotalScoreData> {
   try {
     const currentTimestamp = Math.floor(Date.now() / 1000);
-    console.log(`Current timestamp: ${currentTimestamp}`);
+    console.log(`Calculating total score at timestamp: ${currentTimestamp}`);
     
     const query = `
       query {
@@ -649,8 +683,6 @@ export const getTotalScore = async (): Promise<TotalScoreResponse> => {
     const events = response.data.data.flowDistributionUpdatedEvents;
     
     console.log(`Found ${events.length} flow distribution events`);
-    // log full detail
-//    console.log(JSON.stringify(response.data.data, null, 2));
     
     // Create a Map to store unique pools by ID
     const uniquePools = new Map();
@@ -661,7 +693,6 @@ export const getTotalScore = async (): Promise<TotalScoreResponse> => {
       const poolId = pool.id;
       
       // If we haven't seen this pool before, or if this event is more recent than what we have, keep it
-      // (it shouldn't matter which one we pick, semantics should be that of a pointer)
       if (!uniquePools.has(poolId) || parseInt(pool.updatedAtTimestamp) > parseInt(uniquePools.get(poolId).updatedAtTimestamp)) {
         uniquePools.set(poolId, pool);
       }
@@ -691,30 +722,23 @@ export const getTotalScore = async (): Promise<TotalScoreResponse> => {
     
     return {
       totalScore: totalScoreNormalized,
-      lastUpdatedAt: currentTimestamp
+      poolCount: uniquePools.size,
+      additionalTotalScore: Number(config.additionalTotalScore)
     };
   } catch (error) {
-    console.error(formatAxiosError(error, 'Error fetching total score'));
+    console.error(formatAxiosError(error, 'Error calculating total score'));
     throw error;
   }
-};
-
-
-function _viemClientToEthersV5Provider(client: Client<Transport, Chain>): ethersProviders.Provider {
-  return new ethersProviders.StaticJsonRpcProvider(
-    {
-      url: client.transport.url,
-      timeout: 25000,
-      allowGzip: true
-    },
-    client.chain.id
-  );
 }
 
 async function fetchUnifiedScores(): Promise<UnifiedScores> {
   try {
     console.log('Starting unified scores fetch...');
     const currentTimestamp = Math.floor(Date.now() / 1000);
+
+    // 0. Calculate total score
+    console.log('Calculating total score...');
+    const totalScoreData = await calculateTotalScore();
     
     // 1. Get pool members
     const query = `
@@ -924,7 +948,10 @@ async function fetchUnifiedScores(): Promise<UnifiedScores> {
     return {
       schemaVersion: FILE_SCHEMA_VERSION,
       lastUpdatedAt: currentTimestamp,
-      data: sortedData
+      data: {
+        members: sortedData,
+        totalScore: totalScoreData
+      }
     };
 
   } catch (error) {
