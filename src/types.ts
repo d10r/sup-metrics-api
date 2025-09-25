@@ -84,7 +84,7 @@ export interface TotalScoreResponse {
 
 export interface VotingPower {
   address: string;
-  total: number;
+  own: number;
   delegated: number;
 }
 

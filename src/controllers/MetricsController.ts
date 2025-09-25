@@ -69,7 +69,7 @@ export class MetricsController extends Controller {
     }
     const votingPower = await getVotingPower(address.toLowerCase());
     return {
-      score: votingPower.total,
+      score: votingPower.own + votingPower.delegated,
       delegatedScore: votingPower.delegated,
       timestamp: Math.floor(Date.now() / 1000)
     };

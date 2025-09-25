@@ -42,19 +42,6 @@ interface MemberData {
   locker?: string;
 }
 
-// Generic wrapper type for metric data with metadata
-interface MetricData<T> {
-  schemaVersion: number;
-  lastUpdatedAt: number;
-  data: T;
-}
-
-interface VotingPower2 {
-  address: string;
-  own: number;
-  delegated: number;  
-}
-
 interface SpaceConfig {
   network: string;
   strategies: {
@@ -64,16 +51,17 @@ interface SpaceConfig {
   lastUpdatedAt: number;
 }
 
-// Generic metric data structure
-interface MetricState<T> {
-  data: T;
+// Internal structure for persisted data
+interface MetricsData<T> {
+  schemaVersion: number;
   lastUpdatedAt: number;
-  filePath: string;
+  data: T;
 }
 
-// Generic metric manager
-class MetricManager<T> {
-  private state: MetricState<T>;
+// Generic metrics manager handling data loading, saving and periodic updating
+class MetricsManager<T> {
+  private data: MetricsData<T>;
+  private filePath: string;
   private updateFn: () => Promise<T>;
   private intervalSec: number;
   private isUpdating: boolean = false;
@@ -88,11 +76,12 @@ class MetricManager<T> {
     console.log(`Initializing ${filename} with interval ${intervalSec} seconds`);
     this.updateFn = updateFn;
     this.intervalSec = intervalSec;
-    this.state = {
-      data: initialData,
+    this.data = {
+      schemaVersion: FILE_SCHEMA_VERSION,
       lastUpdatedAt: 0,
-      filePath: path.join(DATA_DIR, filename)
+      data: initialData
     };
+    this.filePath = path.join(DATA_DIR, filename);
     
     // Ensure data directory exists
     if (!fs.existsSync(DATA_DIR)) {
@@ -109,8 +98,8 @@ class MetricManager<T> {
   // Get current data
   getData(): { data: T; lastUpdatedAt: number } {
     return {
-      data: this.state.data,
-      lastUpdatedAt: this.state.lastUpdatedAt
+      data: this.data.data,
+      lastUpdatedAt: this.data.lastUpdatedAt
     };
   }
 
@@ -118,29 +107,28 @@ class MetricManager<T> {
   private saveToFile(): void {
     try {
       fs.writeFileSync(
-        this.state.filePath,
-        JSON.stringify(this.state.data, null, 2)
+        this.filePath,
+        JSON.stringify(this.data, null, 2)
       );
     } catch (error) {
-      console.error(`### Error saving to ${this.state.filePath}:`, error);
+      console.error(`### Error saving to ${this.filePath}:`, error);
     }
   }
 
   // Load data from file
   private loadFromFile(): boolean {
     try {
-      if (fs.existsSync(this.state.filePath)) {
-        const fileData = JSON.parse(fs.readFileSync(this.state.filePath, 'utf8'));
+      if (fs.existsSync(this.filePath)) {
+        const fileData = JSON.parse(fs.readFileSync(this.filePath, 'utf8'));
         if (fileData.schemaVersion !== FILE_SCHEMA_VERSION) {
           console.warn(`File schema version mismatch: ${fileData.schemaVersion} (expected ${FILE_SCHEMA_VERSION})`);
           return false;
         }
-        this.state.data = fileData;
-        this.state.lastUpdatedAt = fileData.lastUpdatedAt;
+        this.data = fileData;
         return true;
       }
     } catch (error) {
-      console.error(`### Error loading from ${this.state.filePath}:`, error);
+      console.error(`### Error loading from ${this.filePath}:`, error);
     }
     return false;
   }
@@ -149,21 +137,26 @@ class MetricManager<T> {
   async update(): Promise<void> {
     // Check if an update is already running
     if (this.isUpdating) {
-      console.log(`Update already in progress for ${this.state.filePath}, skipping this update`);
+      console.log(`Update already in progress for ${this.filePath}, skipping this update`);
       return;
     }
 
     try {
       this.isUpdating = true;
-      console.log(`Starting update for ${this.state.filePath}`);
+      console.log(`Starting update for ${this.filePath}`);
       
-      this.state.data = await this.updateFn();
-      this.state.lastUpdatedAt = Math.floor(Date.now() / 1000);
+      const newData = await this.updateFn();
+      const currentTimestamp = Math.floor(Date.now() / 1000);
+      this.data = {
+        schemaVersion: FILE_SCHEMA_VERSION,
+        lastUpdatedAt: currentTimestamp,
+        data: newData
+      };
       
       this.saveToFile();
-      console.log(`Completed update for ${this.state.filePath}`);
+      console.log(`Completed update for ${this.filePath}`);
     } catch (error) {
-      console.error(`Error updating data for ${this.state.filePath}:`, error);
+      console.error(`Error updating data for ${this.filePath}:`, error);
     } finally {
       this.isUpdating = false;
     }
@@ -172,22 +165,22 @@ class MetricManager<T> {
   // Check if data needs updating based on age and interval
   private needsUpdate(): boolean {
     if (this.intervalSec <= 0) return false;
-    if (this.state.lastUpdatedAt === 0) return true; // No data loaded
+    if (this.data.lastUpdatedAt === 0) return true; // No data loaded
     
     const now = Math.floor(Date.now() / 1000);
-    const dataAge = now - this.state.lastUpdatedAt;
+    const dataAge = now - this.data.lastUpdatedAt;
     return dataAge >= this.intervalSec;
   }
 
   // Start periodic updates
   private startPeriodicUpdates(): void {
     // Always load data on start
-    console.log(`Loading data for ${this.state.filePath}`);
+    console.log(`Loading data for ${this.filePath}`);
     const loaded = this.loadFromFile();
     
     // Determine if we need to update
     if (this.needsUpdate()) {
-      const reason = !loaded ? "No cached data found" : `Cached data is stale (${Math.floor(Date.now() / 1000) - this.state.lastUpdatedAt}s old)`;
+      const reason = !loaded ? "No cached data found" : `Cached data is stale (${Math.floor(Date.now() / 1000) - this.data.lastUpdatedAt}s old)`;
       console.log(`${reason}, will update`);
       
       // Perform initial update if needed
@@ -195,12 +188,12 @@ class MetricManager<T> {
         this.update();
       }
     } else {
-      const dataAge = Math.floor(Date.now() / 1000) - this.state.lastUpdatedAt;
+      const dataAge = Math.floor(Date.now() / 1000) - this.data.lastUpdatedAt;
       console.log(`Using cached data (${dataAge}s old)`);
     }
     
     // Setup interval for future updates
-    console.log(`Setting up periodic updates for ${this.state.filePath} with interval ${this.intervalSec} seconds`);
+    console.log(`Setting up periodic updates for ${this.filePath} with interval ${this.intervalSec} seconds`);
     this.intervalId = setInterval(() => {
       this.update();
     }, this.intervalSec * 1000);
@@ -216,16 +209,16 @@ class MetricManager<T> {
 }
 
 // Create unified score manager instance
-const unifiedScoresManager = new MetricManager<MetricData<Record<string, MemberData>>>(
-  { schemaVersion: FILE_SCHEMA_VERSION, lastUpdatedAt: 0, data: {} },
+const unifiedScoresManager = new MetricsManager<Record<string, MemberData>>(
+  {},
   fetchUnifiedScores,
   'unifiedScores.json',
   0//config.scoresUpdateInterval
 );
 
 // Create distribution metrics manager instance
-const distributionMetricsManager = new MetricManager<MetricData<DistributionMetrics>>(
-  { schemaVersion: FILE_SCHEMA_VERSION, lastUpdatedAt: 0, data: {
+const distributionMetricsManager = new MetricsManager<DistributionMetrics>(
+  {
     reserveBalances: 0,
     stakedSup: 0,
     lpSup: 0,
@@ -236,7 +229,7 @@ const distributionMetricsManager = new MetricManager<MetricData<DistributionMetr
     foundationTreasury: 0,
     other: 0,
     totalSupply: 1000000000 // 1B SUP tokens
-  }},
+  },
   fetchDistributionMetrics,
   'distributionMetrics.json',
   config.distributionMetricsUpdateInterval
@@ -311,7 +304,7 @@ const getSpaceConfig = async (): Promise<SpaceConfig> => {
 export const getDaoMembersCount = (): DaoMembersCountResponse => {
   const { data: unifiedData, lastUpdatedAt } = unifiedScoresManager.getData();
   return {
-    daoMembersCount: Object.keys(unifiedData.data).length,
+    daoMembersCount: Object.keys(unifiedData).length,
     lastUpdatedAt
   };
 };
@@ -320,7 +313,7 @@ export const getTotalDelegatedScore = (): TotalDelegatedScoreResponse => {
   const { data: unifiedData, lastUpdatedAt } = unifiedScoresManager.getData();
   
   // Calculate total delegated score by summing all delegatedVp
-  const totalDelegatedScore = Object.values(unifiedData.data).reduce(
+  const totalDelegatedScore = Object.values(unifiedData).reduce(
     (sum, member) => sum + (member.delegatedVp || 0),
     0
   );
@@ -348,7 +341,7 @@ export const getDaoMembers = (): DaoMember[] => {
   const { data: unifiedData, lastUpdatedAt } = unifiedScoresManager.getData();
   
   // Convert to required format
-  const daoMembers = Object.entries(unifiedData.data).map(([address, data]) => {
+  const daoMembers = Object.entries(unifiedData).map(([address, data]) => {
     const member = {
       address,
       locker: data.locker || null,
@@ -396,7 +389,7 @@ export const getDaoMembersWithFilters = (
 export const getDistributionMetrics = (): DistributionMetricsResponse => {
   const { data: distributionData, lastUpdatedAt } = distributionMetricsManager.getData();
   return {
-    metrics: distributionData.data,
+    metrics: distributionData,
     lastUpdatedAt
   };
 };
@@ -470,7 +463,7 @@ function formatAxiosError(error: unknown, context: string): string {
   return `${context}: ${error}`;
 }
 
-export const getVotingPowerBatch = async (addresses: string[], includeDelegations: boolean): Promise<VotingPower2[]> => {
+export const getVotingPowerBatch = async (addresses: string[], includeDelegations: boolean): Promise<VotingPower[]> => {
   const spaceConfig = await getSpaceConfig();
 
   const strategies = includeDelegations ? 
@@ -523,7 +516,7 @@ export const getVotingPowerBatch = async (addresses: string[], includeDelegation
     const scoresAsup = includeDelegations ? allScores[2] : allScores[1];
 
     // Process the scores according to the required format
-    const result: VotingPower2[] = addresses.map(address => {
+    const result: VotingPower[] = addresses.map(address => {
       const addressLower = address.toLowerCase();
 
       return {
@@ -562,19 +555,23 @@ export const getVotingPower = async (address: string): Promise<VotingPower> => {
       // TODO: add check that item 0 is indeed the own voting power
       const ownVp = response.data.result.vp_by_strategy[0];
       const delegatedVp = response.data.result.vp_by_strategy[1];
+      if (totalVp - ownVp !== delegatedVp) {
+        console.error(`Voting power for ${address}: ${totalVp} (delegated: ${delegatedVp}, own: ${ownVp})`);
+        throw new Error(`Voting power for ${address} is not consistent`);
+      }
       console.log(`Voting power for ${address}: ${totalVp} (delegated: ${delegatedVp}, own: ${ownVp})`);
       //console.log(`Voting power raw for ${address}: ${JSON.stringify(response.data.result, null, 2)}`);
       console.log(`  get_vp ${address} returned: ${JSON.stringify(response.data.result, null, 2)}`);
       return {
         address: address.toLowerCase(),
-        total: totalVp,
+        own: ownVp,
         delegated: delegatedVp
       };
     }
 
     return {
       address: address.toLowerCase(),
-      total: 0,
+      own: 0,
       delegated: 0
     };
   } catch (error) {
@@ -732,7 +729,7 @@ function _viemClientToEthersV5Provider(client: Client<Transport, Chain>): ethers
   );
 }
 
-async function fetchUnifiedScores(): Promise<MetricData<Record<string, MemberData>>> {
+async function fetchUnifiedScores(): Promise<Record<string, MemberData>> {
   try {
     console.log('Starting unified scores fetch...');
     const currentTimestamp = Math.floor(Date.now() / 1000);
@@ -942,11 +939,7 @@ async function fetchUnifiedScores(): Promise<MetricData<Record<string, MemberDat
       sortedData[address] = memberData;
     }
 
-    return {
-      schemaVersion: FILE_SCHEMA_VERSION,
-      lastUpdatedAt: currentTimestamp,
-      data: sortedData
-    };
+    return sortedData;
 
   } catch (error) {
     console.error(formatAxiosError(error, 'Error fetching unified scores'));
@@ -954,7 +947,7 @@ async function fetchUnifiedScores(): Promise<MetricData<Record<string, MemberDat
   }
 }
 
-async function fetchDistributionMetrics(): Promise<MetricData<DistributionMetrics>> {
+async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
   try {
     console.log('Starting distribution metrics fetch...');
     const currentTimestamp = Math.floor(Date.now() / 1000);
@@ -1144,11 +1137,7 @@ async function fetchDistributionMetrics(): Promise<MetricData<DistributionMetric
       totalSupply: metrics.totalSupply
     });
 
-    return {
-      schemaVersion: FILE_SCHEMA_VERSION,
-      lastUpdatedAt: currentTimestamp,
-      data: metrics
-    };
+    return metrics;
 
   } catch (error) {
     console.error(formatAxiosError(error, 'Error fetching distribution metrics'));
