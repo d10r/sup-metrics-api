@@ -15,7 +15,7 @@ import {
 import snapshot from '@snapshot-labs/snapshot.js';
 import snapshotStrategies from '@d10r/snapshot-strategies';
 import { createPublicClient, http, Client, Chain, Transport, Address, erc20Abi } from 'viem';
-import { base } from 'viem/chains'
+import { base, mainnet } from 'viem/chains'
 import * as ethersProviders from '@ethersproject/providers';
 import { LOCKER_ABI, SUP_VESTING_FACTORY_ABI } from './abis';
 
@@ -26,7 +26,7 @@ const FILE_SCHEMA_VERSION = 3;
 // Setup viem client with batching support
 const viemClient = createPublicClient({
   chain: base,
-  transport: http(config.rpcUrl, { 
+  transport: http(config.baseRpcUrl, { 
     batch: {
       wait: 100
     }
@@ -1010,7 +1010,7 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
           })
         );
 
-        const stakedPromises = batch.map(lockerAddress => 
+        const stakedPromises = batch.map(lockerAddress =>
           viemClient.readContract({
             address: lockerAddress as Address,
             abi: LOCKER_ABI,
@@ -1022,10 +1022,6 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
           })
         );
 
-        // not yet available, we use a placeholder return 0 instead
-        const lpPromises = batch.map(_ => {
-          return BigInt(0);
-        });
         /*
         const lpPromises = batch.map(lockerAddress => 
           viemClient.readContract({
@@ -1039,6 +1035,10 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
           })
         );
         */
+        // not yet available, we use a placeholder return 0 instead
+        const lpPromises = batch.map(_ => {
+          return BigInt(0);
+        });
 
         const [balances, stakedBalances, lpBalances] = await Promise.all([
           Promise.all(balancePromises),
@@ -1104,10 +1104,21 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
     // 6. Get Foundation Treasury balance (on Ethereum)
     console.log('Fetching Foundation Treasury balance...');
     try {
-      // TODO: This would need to be called on Ethereum mainnet, not Base
-      // For now, we'll set it to 0 and note that this needs Ethereum RPC
-      metrics.foundationTreasury = 0;
-      console.log('Foundation Treasury balance set to 0 (requires Ethereum mainnet RPC)');
+      const ethereumViemClient = createPublicClient({
+        chain: mainnet,
+        transport: http(config.ethereumRpcUrl, {
+          batch: {
+            wait: 100
+          }
+        }),
+      });
+      const foundationTreasuryBalance = await ethereumViemClient.readContract({
+        address: config.ethereumTokenAddress as Address,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [config.foundationTreasuryAddress as Address]
+      });
+      metrics.foundationTreasury = Number((foundationTreasuryBalance as bigint) / BigInt(10 ** 18));
     } catch (error) {
       console.error(`Error fetching Foundation Treasury balance: ${error}`);
     }
