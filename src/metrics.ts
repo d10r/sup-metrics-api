@@ -14,9 +14,10 @@ import {
 } from './types'; 
 import snapshot from '@snapshot-labs/snapshot.js';
 import snapshotStrategies from '@d10r/snapshot-strategies';
-import { createPublicClient, http, Client, Chain, Transport, Address } from 'viem';
+import { createPublicClient, http, Client, Chain, Transport, Address, erc20Abi } from 'viem';
 import { base } from 'viem/chains'
 import * as ethersProviders from '@ethersproject/providers';
+import { LOCKER_ABI, SUP_VESTING_FACTORY_ABI } from './abis';
 
 // File paths for metric data
 const DATA_DIR = './data';
@@ -32,77 +33,6 @@ const viemClient = createPublicClient({
   }),
 });
 
-// ABI for the lockerOwner method
-const LOCKER_ABI = [
-  {
-    inputs: [],
-    name: 'lockerOwner',
-    outputs: [{ type: 'address' }],
-    stateMutability: 'view',
-    type: 'function'
-  }
-] as const;
-
-// ABI for FluidLocker contract
-const FLUID_LOCKER_ABI = [
-  {
-    inputs: [],
-    name: 'lockerOwner',
-    outputs: [{ type: 'address' }],
-    stateMutability: 'view',
-    type: 'function'
-  },
-  {
-    inputs: [],
-    name: 'getAvailableBalance',
-    outputs: [{ type: 'uint256' }],
-    stateMutability: 'view',
-    type: 'function'
-  },
-  {
-    inputs: [],
-    name: 'getStakedBalance',
-    outputs: [{ type: 'uint256' }],
-    stateMutability: 'view',
-    type: 'function'
-  },
-  {
-    inputs: [],
-    name: 'getLiquidityBalance',
-    outputs: [{ type: 'uint256' }],
-    stateMutability: 'view',
-    type: 'function'
-  },
-  {
-    inputs: [],
-    name: 'balanceOf',
-    outputs: [{ type: 'uint256' }],
-    stateMutability: 'view',
-    type: 'function'
-  }
-] as const;
-
-// ABI for SupVestingFactory contract
-const SUP_VESTING_FACTORY_ABI = [
-  {
-    inputs: [],
-    name: 'totalSupply',
-    outputs: [{ type: 'uint256' }],
-    stateMutability: 'view',
-    type: 'function'
-  }
-] as const;
-
-// ABI for ERC20 balanceOf method
-const ERC20_ABI = [
-  {
-    inputs: [{ name: 'account', type: 'address' }],
-    name: 'balanceOf',
-    outputs: [{ type: 'uint256' }],
-    stateMutability: 'view',
-    type: 'function'
-  }
-] as const;
 
 interface MemberData {
   ownVp: number;
@@ -112,10 +42,11 @@ interface MemberData {
   locker?: string;
 }
 
-interface UnifiedScores {
+// Generic wrapper type for metric data with metadata
+interface MetricData<T> {
   schemaVersion: number;
   lastUpdatedAt: number;
-  data: Record<string, MemberData>;
+  data: T;
 }
 
 interface VotingPower2 {
@@ -285,7 +216,7 @@ class MetricManager<T> {
 }
 
 // Create unified score manager instance
-const unifiedScoresManager = new MetricManager<UnifiedScores>(
+const unifiedScoresManager = new MetricManager<MetricData<Record<string, MemberData>>>(
   { schemaVersion: FILE_SCHEMA_VERSION, lastUpdatedAt: 0, data: {} },
   fetchUnifiedScores,
   'unifiedScores.json',
@@ -293,8 +224,8 @@ const unifiedScoresManager = new MetricManager<UnifiedScores>(
 );
 
 // Create distribution metrics manager instance
-const distributionMetricsManager = new MetricManager<DistributionMetrics>(
-  { 
+const distributionMetricsManager = new MetricManager<MetricData<DistributionMetrics>>(
+  { schemaVersion: FILE_SCHEMA_VERSION, lastUpdatedAt: 0, data: {
     reserveBalances: 0,
     stakedSup: 0,
     lpSup: 0,
@@ -304,9 +235,8 @@ const distributionMetricsManager = new MetricManager<DistributionMetrics>(
     daoTreasury: 0,
     foundationTreasury: 0,
     other: 0,
-    totalSupply: 1000000000, // 1B SUP tokens
-    lastUpdatedAt: 0
-  },
+    totalSupply: 1000000000 // 1B SUP tokens
+  }},
   fetchDistributionMetrics,
   'distributionMetrics.json',
   config.distributionMetricsUpdateInterval
@@ -464,9 +394,9 @@ export const getDaoMembersWithFilters = (
 };
 
 export const getDistributionMetrics = (): DistributionMetricsResponse => {
-  const { data: metrics, lastUpdatedAt } = distributionMetricsManager.getData();
+  const { data: distributionData, lastUpdatedAt } = distributionMetricsManager.getData();
   return {
-    metrics,
+    metrics: distributionData.data,
     lastUpdatedAt
   };
 };
@@ -802,7 +732,7 @@ function _viemClientToEthersV5Provider(client: Client<Transport, Chain>): ethers
   );
 }
 
-async function fetchUnifiedScores(): Promise<UnifiedScores> {
+async function fetchUnifiedScores(): Promise<MetricData<Record<string, MemberData>>> {
   try {
     console.log('Starting unified scores fetch...');
     const currentTimestamp = Math.floor(Date.now() / 1000);
@@ -1024,7 +954,7 @@ async function fetchUnifiedScores(): Promise<UnifiedScores> {
   }
 }
 
-async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
+async function fetchDistributionMetrics(): Promise<MetricData<DistributionMetrics>> {
   try {
     console.log('Starting distribution metrics fetch...');
     const currentTimestamp = Math.floor(Date.now() / 1000);
@@ -1040,8 +970,7 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
       daoTreasury: 0,
       foundationTreasury: 0,
       other: 0,
-      totalSupply: 1000000000, // 1B SUP tokens
-      lastUpdatedAt: currentTimestamp
+      totalSupply: 1000000000 // 1B SUP tokens
     };
 
     // 1. Get all locker addresses from the locker subgraph
@@ -1079,7 +1008,7 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
         const balancePromises = batch.map(lockerAddress => 
           viemClient.readContract({
             address: lockerAddress as Address,
-            abi: FLUID_LOCKER_ABI,
+            abi: LOCKER_ABI,
             functionName: 'getAvailableBalance',
             args: []
           }).catch(error => {
@@ -1091,7 +1020,7 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
         const stakedPromises = batch.map(lockerAddress => 
           viemClient.readContract({
             address: lockerAddress as Address,
-            abi: FLUID_LOCKER_ABI,
+            abi: LOCKER_ABI,
             functionName: 'getStakedBalance',
             args: []
           }).catch(error => {
@@ -1108,7 +1037,7 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
         const lpPromises = batch.map(lockerAddress => 
           viemClient.readContract({
             address: lockerAddress as Address,
-            abi: FLUID_LOCKER_ABI,
+            abi: LOCKER_ABI,
             functionName: 'getLiquidityBalance',
             args: []
           }).catch(error => {
@@ -1126,8 +1055,8 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
 
         // Sum up the batch results
         for (let j = 0; j < batch.length; j++) {
-          totalReserveBalances += balances[j];
-          totalStakedSup += stakedBalances[j];
+          totalReserveBalances += balances[j] as bigint;
+          totalStakedSup += stakedBalances[j] as bigint;
           totalLpSup += lpBalances[j];
         }
       }
@@ -1142,11 +1071,11 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
     try {
       const communityChargeBalance = await viemClient.readContract({
         address: config.tokenAddress as Address,
-        abi: ERC20_ABI,
+        abi: erc20Abi,
         functionName: 'balanceOf',
         args: [config.stakingRewardControllerAddress as Address]
       });
-      metrics.communityCharge = Number(communityChargeBalance / BigInt(10 ** 18));
+      metrics.communityCharge = Number((communityChargeBalance as bigint) / BigInt(10 ** 18));
     } catch (error) {
       console.error(`Error fetching community charge: ${error}`);
     }
@@ -1160,7 +1089,7 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
         functionName: 'totalSupply',
         args: []
       });
-      metrics.investorsTeamLocked = Number(vestingTotalSupply / BigInt(10 ** 18));
+      metrics.investorsTeamLocked = Number((vestingTotalSupply as bigint) / BigInt(10 ** 18));
     } catch (error) {
       console.error(`Error fetching vesting total supply: ${error}`);
     }
@@ -1170,11 +1099,11 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
     try {
       const daoTreasuryBalance = await viemClient.readContract({
         address: config.tokenAddress as Address,
-        abi: ERC20_ABI,
+        abi: erc20Abi,
         functionName: 'balanceOf',
         args: [config.daoTreasuryAddress as Address]
       });
-      metrics.daoTreasury = Number(daoTreasuryBalance / BigInt(10 ** 18));
+      metrics.daoTreasury = Number((daoTreasuryBalance as bigint) / BigInt(10 ** 18));
     } catch (error) {
       console.error(`Error fetching DAO Treasury balance: ${error}`);
     }
@@ -1215,7 +1144,11 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
       totalSupply: metrics.totalSupply
     });
 
-    return metrics;
+    return {
+      schemaVersion: FILE_SCHEMA_VERSION,
+      lastUpdatedAt: currentTimestamp,
+      data: metrics
+    };
 
   } catch (error) {
     console.error(formatAxiosError(error, 'Error fetching distribution metrics'));

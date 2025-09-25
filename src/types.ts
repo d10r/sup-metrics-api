@@ -131,8 +131,6 @@ export interface DistributionMetrics {
   other: number;
   /** Total SUP supply (1B) */
   totalSupply: number;
-  /** Unix timestamp of last update */
-  lastUpdatedAt: number;
 }
 
 /**
