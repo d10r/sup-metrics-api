@@ -3,7 +3,7 @@ import dotenv from 'dotenv';
 dotenv.config();
 
 export const config = {
-  tokenAddress: process.env.TOKEN_ADDRESS || '',
+  tokenAddress: process.env.TOKEN_ADDRESS || '0xa69f80524381275A7fFdb3AE01c54150644c8792',
   lockerFactoryAddress: process.env.LOCKER_FACTORY_ADDRESS || '',
   asupAddress: process.env.ASUP_ADDRESS || '',
   additionalTotalScore: process.env.ADDITIONAL_TOTAL_SCORE || '0',
@@ -22,6 +22,13 @@ export const config = {
   memberScoresUpdateInterval: parseInt(process.env.MEMBER_SCORES_UPDATE_INTERVAL || '86400', 10),
   scoresUpdateInterval: parseInt(process.env.SCORES_UPDATE_INTERVAL || '86400', 10),
   vpCalcChunkSize: parseInt(process.env.VP_CALC_CHUNK_SIZE || '5000', 10),
+  // Distribution metrics contract addresses
+  vestingFactoryAddress: process.env.VESTING_FACTORY_ADDRESS || '0x3DF8A6558073e973f4c3979138Cca836C993E285',
+  stakingRewardControllerAddress: process.env.STAKING_REWARD_CONTROLLER_ADDRESS || '0xb19Ae25A98d352B36CED60F93db926247535048b',
+  daoTreasuryAddress: process.env.DAO_TREASURY_ADDRESS || '0xac808840f02c47C05507f48165d2222FF28EF4e1',
+  foundationTreasuryAddress: process.env.FOUNDATION_TREASURY_ADDRESS || '', // Will be resolved from ENS
+  supSubgraphUrl: process.env.SUP_SUBGRAPH_URL || '',
+  distributionMetricsUpdateInterval: parseInt(process.env.DISTRIBUTION_METRICS_UPDATE_INTERVAL || '86400', 10),
 }; 
 
 export const stringToBytes32 = (str: string) => {

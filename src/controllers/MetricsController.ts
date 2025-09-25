@@ -6,7 +6,8 @@ import {
   getVotingPower,
   getDelegateForUser,
   getTotalScore,
-  getDaoMembersWithFilters
+  getDaoMembersWithFilters,
+  getDistributionMetrics
 } from '../metrics';
 import {
   DaoMembersCountResponse,
@@ -15,7 +16,8 @@ import {
   UserDelegateResponse,
   ConfigResponse,
   TotalScoreResponse,
-  DaoMembersResponse
+  DaoMembersResponse,
+  DistributionMetricsResponse
 } from '../types';
 import { config } from '../config';
 
@@ -125,6 +127,27 @@ export class MetricsController extends Controller {
       min_vp !== undefined ? Number(min_vp) : 10000,
       include_all_delegates === 'true'
     );
+  }
+
+  /**
+   * Get SUP token distribution metrics.<br><br>
+   * 
+   * Returns comprehensive metrics about SUP token distribution across different categories:<br>
+   * - Reserve Balances: Total SUP distributed to lockers but not yet unlocked<br>
+   * - Staked SUP: Portion currently staked via lockers<br>
+   * - LP SUP: Portion in UniswapV3 liquidity via lockers<br>
+   * - Streaming Out: Portion transferred from lockers to fountains, not yet streamed to users<br>
+   * - Community Charge: SUP owned by StakingRewardController (tax from fast unlocks)<br>
+   * - Investors/Team Locked: SUP distributed via SupVestingFactory<br>
+   * - DAO Treasury: DAO Treasury balance<br>
+   * - Foundation Treasury: Foundation Treasury balance<br>
+   * - Other: Remainder of 1B SUP tokens<br><br>
+   * 
+   * This metrics is periodically updated in the background. The last update timestamp is returned.
+   */
+  @Get('/distribution_metrics')
+  public getDistributionMetrics(): DistributionMetricsResponse {
+    return getDistributionMetrics();
   }
 
   /**

@@ -8,7 +8,9 @@ import {
   TotalScoreResponse,
   VotingPower,
   DaoMember,
-  DaoMembersResponse
+  DaoMembersResponse,
+  DistributionMetrics,
+  DistributionMetricsResponse
 } from './types'; 
 import snapshot from '@snapshot-labs/snapshot.js';
 import snapshotStrategies from '@d10r/snapshot-strategies';
@@ -36,6 +38,67 @@ const LOCKER_ABI = [
     inputs: [],
     name: 'lockerOwner',
     outputs: [{ type: 'address' }],
+    stateMutability: 'view',
+    type: 'function'
+  }
+] as const;
+
+// ABI for FluidLocker contract
+const FLUID_LOCKER_ABI = [
+  {
+    inputs: [],
+    name: 'lockerOwner',
+    outputs: [{ type: 'address' }],
+    stateMutability: 'view',
+    type: 'function'
+  },
+  {
+    inputs: [],
+    name: 'getAvailableBalance',
+    outputs: [{ type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function'
+  },
+  {
+    inputs: [],
+    name: 'getStakedBalance',
+    outputs: [{ type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function'
+  },
+  {
+    inputs: [],
+    name: 'getLiquidityBalance',
+    outputs: [{ type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function'
+  },
+  {
+    inputs: [],
+    name: 'balanceOf',
+    outputs: [{ type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function'
+  }
+] as const;
+
+// ABI for SupVestingFactory contract
+const SUP_VESTING_FACTORY_ABI = [
+  {
+    inputs: [],
+    name: 'totalSupply',
+    outputs: [{ type: 'uint256' }],
+    stateMutability: 'view',
+    type: 'function'
+  }
+] as const;
+
+// ABI for ERC20 balanceOf method
+const ERC20_ABI = [
+  {
+    inputs: [{ name: 'account', type: 'address' }],
+    name: 'balanceOf',
+    outputs: [{ type: 'uint256' }],
     stateMutability: 'view',
     type: 'function'
   }
@@ -226,7 +289,27 @@ const unifiedScoresManager = new MetricManager<UnifiedScores>(
   { schemaVersion: FILE_SCHEMA_VERSION, lastUpdatedAt: 0, data: {} },
   fetchUnifiedScores,
   'unifiedScores.json',
-  config.scoresUpdateInterval
+  0//config.scoresUpdateInterval
+);
+
+// Create distribution metrics manager instance
+const distributionMetricsManager = new MetricManager<DistributionMetrics>(
+  { 
+    reserveBalances: 0,
+    stakedSup: 0,
+    lpSup: 0,
+    streamingOut: 0,
+    communityCharge: 0,
+    investorsTeamLocked: 0,
+    daoTreasury: 0,
+    foundationTreasury: 0,
+    other: 0,
+    totalSupply: 1000000000, // 1B SUP tokens
+    lastUpdatedAt: 0
+  },
+  fetchDistributionMetrics,
+  'distributionMetrics.json',
+  config.distributionMetricsUpdateInterval
 );
 
 // Cache for space config with 24h expiration
@@ -376,6 +459,14 @@ export const getDaoMembersWithFilters = (
   return {
     totalMembersCount: daoMembers.length,
     daoMembers: filteredMembers,
+    lastUpdatedAt
+  };
+};
+
+export const getDistributionMetrics = (): DistributionMetricsResponse => {
+  const { data: metrics, lastUpdatedAt } = distributionMetricsManager.getData();
+  return {
+    metrics,
     lastUpdatedAt
   };
 };
@@ -929,6 +1020,205 @@ async function fetchUnifiedScores(): Promise<UnifiedScores> {
 
   } catch (error) {
     console.error(formatAxiosError(error, 'Error fetching unified scores'));
+    throw error;
+  }
+}
+
+async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
+  try {
+    console.log('Starting distribution metrics fetch...');
+    const currentTimestamp = Math.floor(Date.now() / 1000);
+    
+    // Initialize metrics with default values
+    const metrics: DistributionMetrics = {
+      reserveBalances: 0,
+      stakedSup: 0,
+      lpSup: 0,
+      streamingOut: 0,
+      communityCharge: 0,
+      investorsTeamLocked: 0,
+      daoTreasury: 0,
+      foundationTreasury: 0,
+      other: 0,
+      totalSupply: 1000000000, // 1B SUP tokens
+      lastUpdatedAt: currentTimestamp
+    };
+
+    // 1. Get all locker addresses from the locker subgraph
+    console.log('Fetching locker addresses from subgraph...');
+    const lockers = await queryAllPages(
+      (lastId) => `{
+        lockers(
+          first: 1000,
+          where: { id_gt: "${lastId}" }
+          orderBy: id,
+          orderDirection: asc
+        ) {
+          id
+        }
+      }`,
+      (res) => res.data.data.lockers,
+      (item) => item.id,
+      config.supSubgraphUrl
+    );
+
+    console.log(`Found ${lockers.length} lockers`);
+
+    if (lockers.length > 0) {
+      // 2. Batch contract calls to get locker data
+      console.log('Fetching locker balances and staked amounts...');
+      const batchSize = 100;
+      let totalReserveBalances = BigInt(0);
+      let totalStakedSup = BigInt(0);
+      let totalLpSup = BigInt(0);
+
+      for (let i = 0; i < lockers.length; i += batchSize) {
+        const batch = lockers.slice(i, i + batchSize);
+        console.log(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(lockers.length / batchSize)}`);
+        
+        const balancePromises = batch.map(lockerAddress => 
+          viemClient.readContract({
+            address: lockerAddress as Address,
+            abi: FLUID_LOCKER_ABI,
+            functionName: 'getAvailableBalance',
+            args: []
+          }).catch(error => {
+            console.debug(`Error fetching available balance for locker ${lockerAddress}: ${error.message}`);
+            return BigInt(0);
+          })
+        );
+
+        const stakedPromises = batch.map(lockerAddress => 
+          viemClient.readContract({
+            address: lockerAddress as Address,
+            abi: FLUID_LOCKER_ABI,
+            functionName: 'getStakedBalance',
+            args: []
+          }).catch(error => {
+            console.debug(`Error fetching staked balance for locker ${lockerAddress}: ${error.message}`);
+            return BigInt(0);
+          })
+        );
+
+        // not yet available, we use a placeholder return 0 instead
+        const lpPromises = batch.map(_ => {
+          return BigInt(0);
+        });
+        /*
+        const lpPromises = batch.map(lockerAddress => 
+          viemClient.readContract({
+            address: lockerAddress as Address,
+            abi: FLUID_LOCKER_ABI,
+            functionName: 'getLiquidityBalance',
+            args: []
+          }).catch(error => {
+            console.debug(`Error fetching LP balance for locker ${lockerAddress}: ${error.message}`);
+            return BigInt(0);
+          })
+        );
+        */
+
+        const [balances, stakedBalances, lpBalances] = await Promise.all([
+          Promise.all(balancePromises),
+          Promise.all(stakedPromises),
+          Promise.all(lpPromises)
+        ]);
+
+        // Sum up the batch results
+        for (let j = 0; j < batch.length; j++) {
+          totalReserveBalances += balances[j];
+          totalStakedSup += stakedBalances[j];
+          totalLpSup += lpBalances[j];
+        }
+      }
+
+      metrics.reserveBalances = Number(totalReserveBalances / BigInt(10 ** 18));
+      metrics.stakedSup = Number(totalStakedSup / BigInt(10 ** 18));
+      metrics.lpSup = Number(totalLpSup / BigInt(10 ** 18));
+    }
+
+    // 3. Get community charge (StakingRewardController balance)
+    console.log('Fetching community charge...');
+    try {
+      const communityChargeBalance = await viemClient.readContract({
+        address: config.tokenAddress as Address,
+        abi: ERC20_ABI,
+        functionName: 'balanceOf',
+        args: [config.stakingRewardControllerAddress as Address]
+      });
+      metrics.communityCharge = Number(communityChargeBalance / BigInt(10 ** 18));
+    } catch (error) {
+      console.error(`Error fetching community charge: ${error}`);
+    }
+
+    // 4. Get investors/team locked SUP (SupVestingFactory totalSupply)
+    console.log('Fetching investors/team locked SUP...');
+    try {
+      const vestingTotalSupply = await viemClient.readContract({
+        address: config.vestingFactoryAddress as Address,
+        abi: SUP_VESTING_FACTORY_ABI,
+        functionName: 'totalSupply',
+        args: []
+      });
+      metrics.investorsTeamLocked = Number(vestingTotalSupply / BigInt(10 ** 18));
+    } catch (error) {
+      console.error(`Error fetching vesting total supply: ${error}`);
+    }
+
+    // 5. Get DAO Treasury balance
+    console.log('Fetching DAO Treasury balance...');
+    try {
+      const daoTreasuryBalance = await viemClient.readContract({
+        address: config.tokenAddress as Address,
+        abi: ERC20_ABI,
+        functionName: 'balanceOf',
+        args: [config.daoTreasuryAddress as Address]
+      });
+      metrics.daoTreasury = Number(daoTreasuryBalance / BigInt(10 ** 18));
+    } catch (error) {
+      console.error(`Error fetching DAO Treasury balance: ${error}`);
+    }
+
+    // 6. Get Foundation Treasury balance (on Ethereum)
+    console.log('Fetching Foundation Treasury balance...');
+    try {
+      // TODO: This would need to be called on Ethereum mainnet, not Base
+      // For now, we'll set it to 0 and note that this needs Ethereum RPC
+      metrics.foundationTreasury = 0;
+      console.log('Foundation Treasury balance set to 0 (requires Ethereum mainnet RPC)');
+    } catch (error) {
+      console.error(`Error fetching Foundation Treasury balance: ${error}`);
+    }
+
+    // 7. Calculate streaming out (placeholder - would need fountain subgraph data)
+    console.log('Calculating streaming out...');
+    // This would require querying the fountain subgraph for active streams
+    // For now, set to 0
+    metrics.streamingOut = 0;
+
+    // 8. Calculate "Other" as remainder
+    const accountedFor = metrics.reserveBalances + metrics.communityCharge + 
+                        metrics.investorsTeamLocked + metrics.daoTreasury + 
+                        metrics.foundationTreasury;
+    metrics.other = metrics.totalSupply - accountedFor;
+
+    console.log('Distribution metrics calculated:', {
+      reserveBalances: metrics.reserveBalances,
+      stakedSup: metrics.stakedSup,
+      lpSup: metrics.lpSup,
+      streamingOut: metrics.streamingOut,
+      communityCharge: metrics.communityCharge,
+      investorsTeamLocked: metrics.investorsTeamLocked,
+      daoTreasury: metrics.daoTreasury,
+      foundationTreasury: metrics.foundationTreasury,
+      other: metrics.other,
+      totalSupply: metrics.totalSupply
+    });
+
+    return metrics;
+
+  } catch (error) {
+    console.error(formatAxiosError(error, 'Error fetching distribution metrics'));
     throw error;
   }
 }

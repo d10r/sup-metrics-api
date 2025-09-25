@@ -105,4 +105,42 @@ export interface DaoMembersResponse {
   totalMembersCount: number;
   daoMembers: DaoMember[];
   lastUpdatedAt: number;
+}
+
+/**
+ * Distribution metrics for SUP token allocation
+ */
+export interface DistributionMetrics {
+  /** Total amount of SUP distributed to lockers but not yet unlocked */
+  reserveBalances: number;
+  /** Portion currently staked via lockers */
+  stakedSup: number;
+  /** Portion in UniswapV3 liquidity via lockers */
+  lpSup: number;
+  /** Portion transferred from lockers to fountains, not yet streamed to users */
+  streamingOut: number;
+  /** SUP owned by StakingRewardController (tax from fast unlocks) */
+  communityCharge: number;
+  /** SUP locked for Investors and Team via SupVestingFactory */
+  investorsTeamLocked: number;
+  /** DAO Treasury balance */
+  daoTreasury: number;
+  /** Foundation Treasury balance */
+  foundationTreasury: number;
+  /** Remainder of 1B SUP tokens */
+  other: number;
+  /** Total SUP supply (1B) */
+  totalSupply: number;
+  /** Unix timestamp of last update */
+  lastUpdatedAt: number;
+}
+
+/**
+ * Response for distribution metrics endpoint
+ */
+export interface DistributionMetricsResponse {
+  /** Distribution metrics data */
+  metrics: DistributionMetrics;
+  /** Unix timestamp of last update */
+  lastUpdatedAt: number;
 } 
