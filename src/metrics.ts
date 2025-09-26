@@ -208,12 +208,12 @@ class MetricsManager<T> {
   }
 }
 
-// Create unified score manager instance
-const unifiedScoresManager = new MetricsManager<Record<string, MemberData>>(
+// Create voting metrics manager instance
+const votingMetricsManager = new MetricsManager<Record<string, MemberData>>(
   {},
-  fetchUnifiedScores,
-  'unifiedScores.json',
-  config.scoresUpdateInterval
+  fetchVotingMetrics,
+  'votingMetrics.json',
+  config.votingMetricsUpdateInterval
 );
 
 // Create distribution metrics manager instance
@@ -302,7 +302,7 @@ const getSpaceConfig = async (): Promise<SpaceConfig> => {
 // Public API methods
 
 export const getDaoMembersCount = (): DaoMembersCountResponse => {
-  const { data: unifiedData, lastUpdatedAt } = unifiedScoresManager.getData();
+  const { data: unifiedData, lastUpdatedAt } = votingMetricsManager.getData();
   return {
     daoMembersCount: Object.keys(unifiedData).length,
     lastUpdatedAt
@@ -310,7 +310,7 @@ export const getDaoMembersCount = (): DaoMembersCountResponse => {
 };
 
 export const getTotalDelegatedScore = (): TotalDelegatedScoreResponse => {
-  const { data: unifiedData, lastUpdatedAt } = unifiedScoresManager.getData();
+  const { data: unifiedData, lastUpdatedAt } = votingMetricsManager.getData();
   
   // Calculate total delegated score by summing all delegatedVp
   const totalDelegatedScore = Object.values(unifiedData).reduce(
@@ -335,10 +335,10 @@ export const getTotalDelegatedScore = (): TotalDelegatedScoreResponse => {
   };
 };
 
-// Combine data for DAO members endpoint
+// Combine data for DAO members endpoint from voting metrics
 export const getDaoMembers = (): DaoMember[] => {
   console.log('getDaoMembers called');
-  const { data: unifiedData, lastUpdatedAt } = unifiedScoresManager.getData();
+  const { data: unifiedData, lastUpdatedAt } = votingMetricsManager.getData();
   
   // Convert to required format
   const daoMembers = Object.entries(unifiedData).map(([address, data]) => {
@@ -365,7 +365,7 @@ export const getDaoMembersWithFilters = (
 ): DaoMembersResponse => {
   console.log('getDaoMembersWithFilters called with:', { minVotingPower, includeAllDelegates });
   const daoMembers = getDaoMembers();
-  const { lastUpdatedAt } = unifiedScoresManager.getData();
+  const { lastUpdatedAt } = votingMetricsManager.getData();
   
   
   const filteredMembers = daoMembers.filter(member => {
@@ -505,11 +505,11 @@ export const getVotingPowerBatch = async (addresses: string[], includeDelegation
         Object.assign(allScores[strategyIndex], strategyScores);
       });
       
-      // persist to a file with the chunk number as filename
-      fs.writeFileSync(`scores_chunk_${i}.json`, JSON.stringify(chunkScores, null, 2));
+      // uncomment for debugging
+      //fs.writeFileSync(`scores_chunk_${i}.json`, JSON.stringify(chunkScores, null, 2));
     }
 
-    // persist the final merged scores to a file
+    // uncomment for debugging
     //fs.writeFileSync('scores.json', JSON.stringify(allScores, null, 2));
     const scoresFountainhead = allScores[0];
     const scoresDelegation = includeDelegations ? allScores[1] : {};
@@ -685,7 +685,7 @@ export const getTotalScore = async (): Promise<TotalScoreResponse> => {
       }
     }
     
-    let totalScore = BigInt(config.additionalTotalScore) * BigInt(10 ** 18);
+    let totalScore = BigInt(config.additionalTotalVp) * BigInt(10 ** 18);
     
     // Process only unique pools
     for (const pool of uniquePools.values()) {
@@ -729,9 +729,9 @@ function _viemClientToEthersV5Provider(client: Client<Transport, Chain>): ethers
   );
 }
 
-async function fetchUnifiedScores(): Promise<Record<string, MemberData>> {
+async function fetchVotingMetrics(): Promise<Record<string, MemberData>> {
   try {
-    console.log('Starting unified scores fetch...');
+    console.log('Starting voting metrics fetch...');
     const currentTimestamp = Math.floor(Date.now() / 1000);
     
     // 1. Get pool members
@@ -942,7 +942,7 @@ async function fetchUnifiedScores(): Promise<Record<string, MemberData>> {
     return sortedData;
 
   } catch (error) {
-    console.error(formatAxiosError(error, 'Error fetching unified scores'));
+    console.error(formatAxiosError(error, 'Error fetching voting metrics'));
     throw error;
   }
 }
@@ -1063,7 +1063,7 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
     console.log('Fetching community charge...');
     try {
       const communityChargeBalance = await viemClient.readContract({
-        address: config.tokenAddress as Address,
+        address: config.baseTokenAddress as Address,
         abi: erc20Abi,
         functionName: 'balanceOf',
         args: [config.stakingRewardControllerAddress as Address]
@@ -1091,7 +1091,7 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
     console.log('Fetching DAO Treasury balance...');
     try {
       const daoTreasuryBalance = await viemClient.readContract({
-        address: config.tokenAddress as Address,
+        address: config.baseTokenAddress as Address,
         abi: erc20Abi,
         functionName: 'balanceOf',
         args: [config.daoTreasuryAddress as Address]
