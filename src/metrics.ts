@@ -8,13 +8,16 @@ import {
   TotalScoreResponse,
   VotingPower,
   DaoMember,
-  DaoMembersResponse
+  DaoMembersResponse,
+  DistributionMetrics,
+  DistributionMetricsResponse
 } from './types'; 
 import snapshot from '@snapshot-labs/snapshot.js';
 import snapshotStrategies from '@d10r/snapshot-strategies';
-import { createPublicClient, http, Client, Chain, Transport, Address } from 'viem';
-import { base } from 'viem/chains'
+import { createPublicClient, http, Client, Chain, Transport, Address, erc20Abi } from 'viem';
+import { base, mainnet } from 'viem/chains'
 import * as ethersProviders from '@ethersproject/providers';
+import { LOCKER_ABI, SUP_VESTING_FACTORY_ABI } from './abis';
 
 // File paths for metric data
 const DATA_DIR = './data';
@@ -23,23 +26,13 @@ const FILE_SCHEMA_VERSION = 3;
 // Setup viem client with batching support
 const viemClient = createPublicClient({
   chain: base,
-  transport: http(config.rpcUrl, { 
+  transport: http(config.baseRpcUrl, { 
     batch: {
       wait: 100
     }
   }),
 });
 
-// ABI for the lockerOwner method
-const LOCKER_ABI = [
-  {
-    inputs: [],
-    name: 'lockerOwner',
-    outputs: [{ type: 'address' }],
-    stateMutability: 'view',
-    type: 'function'
-  }
-] as const;
 
 interface MemberData {
   ownVp: number;
@@ -47,18 +40,6 @@ interface MemberData {
   nrDelegators?: number;
   delegate?: string;
   locker?: string;
-}
-
-interface UnifiedScores {
-  schemaVersion: number;
-  lastUpdatedAt: number;
-  data: Record<string, MemberData>;
-}
-
-interface VotingPower2 {
-  address: string;
-  own: number;
-  delegated: number;  
 }
 
 interface SpaceConfig {
@@ -70,16 +51,17 @@ interface SpaceConfig {
   lastUpdatedAt: number;
 }
 
-// Generic metric data structure
-interface MetricState<T> {
-  data: T;
+// Internal structure for persisted data
+interface MetricsData<T> {
+  schemaVersion: number;
   lastUpdatedAt: number;
-  filePath: string;
+  data: T;
 }
 
-// Generic metric manager
-class MetricManager<T> {
-  private state: MetricState<T>;
+// Generic metrics manager handling data loading, saving and periodic updating
+class MetricsManager<T> {
+  private data: MetricsData<T>;
+  private filePath: string;
   private updateFn: () => Promise<T>;
   private intervalSec: number;
   private isUpdating: boolean = false;
@@ -94,11 +76,12 @@ class MetricManager<T> {
     console.log(`Initializing ${filename} with interval ${intervalSec} seconds`);
     this.updateFn = updateFn;
     this.intervalSec = intervalSec;
-    this.state = {
-      data: initialData,
+    this.data = {
+      schemaVersion: FILE_SCHEMA_VERSION,
       lastUpdatedAt: 0,
-      filePath: path.join(DATA_DIR, filename)
+      data: initialData
     };
+    this.filePath = path.join(DATA_DIR, filename);
     
     // Ensure data directory exists
     if (!fs.existsSync(DATA_DIR)) {
@@ -115,8 +98,8 @@ class MetricManager<T> {
   // Get current data
   getData(): { data: T; lastUpdatedAt: number } {
     return {
-      data: this.state.data,
-      lastUpdatedAt: this.state.lastUpdatedAt
+      data: this.data.data,
+      lastUpdatedAt: this.data.lastUpdatedAt
     };
   }
 
@@ -124,29 +107,28 @@ class MetricManager<T> {
   private saveToFile(): void {
     try {
       fs.writeFileSync(
-        this.state.filePath,
-        JSON.stringify(this.state.data, null, 2)
+        this.filePath,
+        JSON.stringify(this.data, null, 2)
       );
     } catch (error) {
-      console.error(`### Error saving to ${this.state.filePath}:`, error);
+      console.error(`### Error saving to ${this.filePath}:`, error);
     }
   }
 
   // Load data from file
   private loadFromFile(): boolean {
     try {
-      if (fs.existsSync(this.state.filePath)) {
-        const fileData = JSON.parse(fs.readFileSync(this.state.filePath, 'utf8'));
+      if (fs.existsSync(this.filePath)) {
+        const fileData = JSON.parse(fs.readFileSync(this.filePath, 'utf8'));
         if (fileData.schemaVersion !== FILE_SCHEMA_VERSION) {
           console.warn(`File schema version mismatch: ${fileData.schemaVersion} (expected ${FILE_SCHEMA_VERSION})`);
           return false;
         }
-        this.state.data = fileData;
-        this.state.lastUpdatedAt = fileData.lastUpdatedAt;
+        this.data = fileData;
         return true;
       }
     } catch (error) {
-      console.error(`### Error loading from ${this.state.filePath}:`, error);
+      console.error(`### Error loading from ${this.filePath}:`, error);
     }
     return false;
   }
@@ -155,21 +137,26 @@ class MetricManager<T> {
   async update(): Promise<void> {
     // Check if an update is already running
     if (this.isUpdating) {
-      console.log(`Update already in progress for ${this.state.filePath}, skipping this update`);
+      console.log(`Update already in progress for ${this.filePath}, skipping this update`);
       return;
     }
 
     try {
       this.isUpdating = true;
-      console.log(`Starting update for ${this.state.filePath}`);
+      console.log(`Starting update for ${this.filePath}`);
       
-      this.state.data = await this.updateFn();
-      this.state.lastUpdatedAt = Math.floor(Date.now() / 1000);
+      const newData = await this.updateFn();
+      const currentTimestamp = Math.floor(Date.now() / 1000);
+      this.data = {
+        schemaVersion: FILE_SCHEMA_VERSION,
+        lastUpdatedAt: currentTimestamp,
+        data: newData
+      };
       
       this.saveToFile();
-      console.log(`Completed update for ${this.state.filePath}`);
+      console.log(`Completed update for ${this.filePath}`);
     } catch (error) {
-      console.error(`Error updating data for ${this.state.filePath}:`, error);
+      console.error(`Error updating data for ${this.filePath}:`, error);
     } finally {
       this.isUpdating = false;
     }
@@ -178,22 +165,22 @@ class MetricManager<T> {
   // Check if data needs updating based on age and interval
   private needsUpdate(): boolean {
     if (this.intervalSec <= 0) return false;
-    if (this.state.lastUpdatedAt === 0) return true; // No data loaded
+    if (this.data.lastUpdatedAt === 0) return true; // No data loaded
     
     const now = Math.floor(Date.now() / 1000);
-    const dataAge = now - this.state.lastUpdatedAt;
+    const dataAge = now - this.data.lastUpdatedAt;
     return dataAge >= this.intervalSec;
   }
 
   // Start periodic updates
   private startPeriodicUpdates(): void {
     // Always load data on start
-    console.log(`Loading data for ${this.state.filePath}`);
+    console.log(`Loading data for ${this.filePath}`);
     const loaded = this.loadFromFile();
     
     // Determine if we need to update
     if (this.needsUpdate()) {
-      const reason = !loaded ? "No cached data found" : `Cached data is stale (${Math.floor(Date.now() / 1000) - this.state.lastUpdatedAt}s old)`;
+      const reason = !loaded ? "No cached data found" : `Cached data is stale (${Math.floor(Date.now() / 1000) - this.data.lastUpdatedAt}s old)`;
       console.log(`${reason}, will update`);
       
       // Perform initial update if needed
@@ -201,12 +188,12 @@ class MetricManager<T> {
         this.update();
       }
     } else {
-      const dataAge = Math.floor(Date.now() / 1000) - this.state.lastUpdatedAt;
+      const dataAge = Math.floor(Date.now() / 1000) - this.data.lastUpdatedAt;
       console.log(`Using cached data (${dataAge}s old)`);
     }
     
     // Setup interval for future updates
-    console.log(`Setting up periodic updates for ${this.state.filePath} with interval ${this.intervalSec} seconds`);
+    console.log(`Setting up periodic updates for ${this.filePath} with interval ${this.intervalSec} seconds`);
     this.intervalId = setInterval(() => {
       this.update();
     }, this.intervalSec * 1000);
@@ -221,12 +208,31 @@ class MetricManager<T> {
   }
 }
 
-// Create unified score manager instance
-const unifiedScoresManager = new MetricManager<UnifiedScores>(
-  { schemaVersion: FILE_SCHEMA_VERSION, lastUpdatedAt: 0, data: {} },
-  fetchUnifiedScores,
-  'unifiedScores.json',
-  config.scoresUpdateInterval
+// Create voting metrics manager instance
+const votingMetricsManager = new MetricsManager<Record<string, MemberData>>(
+  {},
+  fetchVotingMetrics,
+  'votingMetrics.json',
+  config.votingMetricsUpdateInterval
+);
+
+// Create distribution metrics manager instance
+const distributionMetricsManager = new MetricsManager<DistributionMetrics>(
+  {
+    reserveBalances: 0,
+    stakedSup: 0,
+    lpSup: 0,
+    streamingOut: 0,
+    communityCharge: 0,
+    investorsTeamLocked: 0,
+    daoTreasury: 0,
+    foundationTreasury: 0,
+    other: 0,
+    totalSupply: 1000000000 // 1B SUP tokens
+  },
+  fetchDistributionMetrics,
+  'distributionMetrics.json',
+  config.distributionMetricsUpdateInterval
 );
 
 // Cache for space config with 24h expiration
@@ -296,18 +302,18 @@ const getSpaceConfig = async (): Promise<SpaceConfig> => {
 // Public API methods
 
 export const getDaoMembersCount = (): DaoMembersCountResponse => {
-  const { data: unifiedData, lastUpdatedAt } = unifiedScoresManager.getData();
+  const { data: unifiedData, lastUpdatedAt } = votingMetricsManager.getData();
   return {
-    daoMembersCount: Object.keys(unifiedData.data).length,
+    daoMembersCount: Object.keys(unifiedData).length,
     lastUpdatedAt
   };
 };
 
 export const getTotalDelegatedScore = (): TotalDelegatedScoreResponse => {
-  const { data: unifiedData, lastUpdatedAt } = unifiedScoresManager.getData();
+  const { data: unifiedData, lastUpdatedAt } = votingMetricsManager.getData();
   
   // Calculate total delegated score by summing all delegatedVp
-  const totalDelegatedScore = Object.values(unifiedData.data).reduce(
+  const totalDelegatedScore = Object.values(unifiedData).reduce(
     (sum, member) => sum + (member.delegatedVp || 0),
     0
   );
@@ -329,13 +335,13 @@ export const getTotalDelegatedScore = (): TotalDelegatedScoreResponse => {
   };
 };
 
-// Combine data for DAO members endpoint
+// Combine data for DAO members endpoint from voting metrics
 export const getDaoMembers = (): DaoMember[] => {
   console.log('getDaoMembers called');
-  const { data: unifiedData, lastUpdatedAt } = unifiedScoresManager.getData();
+  const { data: unifiedData, lastUpdatedAt } = votingMetricsManager.getData();
   
   // Convert to required format
-  const daoMembers = Object.entries(unifiedData.data).map(([address, data]) => {
+  const daoMembers = Object.entries(unifiedData).map(([address, data]) => {
     const member = {
       address,
       locker: data.locker || null,
@@ -359,7 +365,7 @@ export const getDaoMembersWithFilters = (
 ): DaoMembersResponse => {
   console.log('getDaoMembersWithFilters called with:', { minVotingPower, includeAllDelegates });
   const daoMembers = getDaoMembers();
-  const { lastUpdatedAt } = unifiedScoresManager.getData();
+  const { lastUpdatedAt } = votingMetricsManager.getData();
   
   
   const filteredMembers = daoMembers.filter(member => {
@@ -376,6 +382,14 @@ export const getDaoMembersWithFilters = (
   return {
     totalMembersCount: daoMembers.length,
     daoMembers: filteredMembers,
+    lastUpdatedAt
+  };
+};
+
+export const getDistributionMetrics = (): DistributionMetricsResponse => {
+  const { data: distributionData, lastUpdatedAt } = distributionMetricsManager.getData();
+  return {
+    metrics: distributionData,
     lastUpdatedAt
   };
 };
@@ -449,7 +463,7 @@ function formatAxiosError(error: unknown, context: string): string {
   return `${context}: ${error}`;
 }
 
-export const getVotingPowerBatch = async (addresses: string[], includeDelegations: boolean): Promise<VotingPower2[]> => {
+export const getVotingPowerBatch = async (addresses: string[], includeDelegations: boolean): Promise<VotingPower[]> => {
   const spaceConfig = await getSpaceConfig();
 
   const strategies = includeDelegations ? 
@@ -491,18 +505,18 @@ export const getVotingPowerBatch = async (addresses: string[], includeDelegation
         Object.assign(allScores[strategyIndex], strategyScores);
       });
       
-      // persist to a file with the chunk number as filename
-      fs.writeFileSync(`scores_chunk_${i}.json`, JSON.stringify(chunkScores, null, 2));
+      // uncomment for debugging
+      //fs.writeFileSync(`scores_chunk_${i}.json`, JSON.stringify(chunkScores, null, 2));
     }
 
-    // persist the final merged scores to a file
+    // uncomment for debugging
     //fs.writeFileSync('scores.json', JSON.stringify(allScores, null, 2));
     const scoresFountainhead = allScores[0];
     const scoresDelegation = includeDelegations ? allScores[1] : {};
     const scoresAsup = includeDelegations ? allScores[2] : allScores[1];
 
     // Process the scores according to the required format
-    const result: VotingPower2[] = addresses.map(address => {
+    const result: VotingPower[] = addresses.map(address => {
       const addressLower = address.toLowerCase();
 
       return {
@@ -541,19 +555,23 @@ export const getVotingPower = async (address: string): Promise<VotingPower> => {
       // TODO: add check that item 0 is indeed the own voting power
       const ownVp = response.data.result.vp_by_strategy[0];
       const delegatedVp = response.data.result.vp_by_strategy[1];
+      if (totalVp - ownVp !== delegatedVp) {
+        console.error(`Voting power for ${address}: ${totalVp} (delegated: ${delegatedVp}, own: ${ownVp})`);
+        throw new Error(`Voting power for ${address} is not consistent`);
+      }
       console.log(`Voting power for ${address}: ${totalVp} (delegated: ${delegatedVp}, own: ${ownVp})`);
       //console.log(`Voting power raw for ${address}: ${JSON.stringify(response.data.result, null, 2)}`);
       console.log(`  get_vp ${address} returned: ${JSON.stringify(response.data.result, null, 2)}`);
       return {
         address: address.toLowerCase(),
-        total: totalVp,
+        own: ownVp,
         delegated: delegatedVp
       };
     }
 
     return {
       address: address.toLowerCase(),
-      total: 0,
+      own: 0,
       delegated: 0
     };
   } catch (error) {
@@ -667,7 +685,7 @@ export const getTotalScore = async (): Promise<TotalScoreResponse> => {
       }
     }
     
-    let totalScore = BigInt(config.additionalTotalScore) * BigInt(10 ** 18);
+    let totalScore = BigInt(config.additionalTotalVp) * BigInt(10 ** 18);
     
     // Process only unique pools
     for (const pool of uniquePools.values()) {
@@ -711,9 +729,9 @@ function _viemClientToEthersV5Provider(client: Client<Transport, Chain>): ethers
   );
 }
 
-async function fetchUnifiedScores(): Promise<UnifiedScores> {
+async function fetchVotingMetrics(): Promise<Record<string, MemberData>> {
   try {
-    console.log('Starting unified scores fetch...');
+    console.log('Starting voting metrics fetch...');
     const currentTimestamp = Math.floor(Date.now() / 1000);
     
     // 1. Get pool members
@@ -921,14 +939,219 @@ async function fetchUnifiedScores(): Promise<UnifiedScores> {
       sortedData[address] = memberData;
     }
 
-    return {
-      schemaVersion: FILE_SCHEMA_VERSION,
-      lastUpdatedAt: currentTimestamp,
-      data: sortedData
-    };
+    return sortedData;
 
   } catch (error) {
-    console.error(formatAxiosError(error, 'Error fetching unified scores'));
+    console.error(formatAxiosError(error, 'Error fetching voting metrics'));
+    throw error;
+  }
+}
+
+async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
+  try {
+    console.log('Starting distribution metrics fetch...');
+    const currentTimestamp = Math.floor(Date.now() / 1000);
+    
+    // Initialize metrics with default values
+    const metrics: DistributionMetrics = {
+      reserveBalances: 0,
+      stakedSup: 0,
+      lpSup: 0,
+      streamingOut: 0,
+      communityCharge: 0,
+      investorsTeamLocked: 0,
+      daoTreasury: 0,
+      foundationTreasury: 0,
+      other: 0,
+      totalSupply: 1000000000 // 1B SUP tokens
+    };
+
+    // 1. Get all locker addresses from the locker subgraph
+    console.log('Fetching locker addresses from subgraph...');
+    const lockers = await queryAllPages(
+      (lastId) => `{
+        lockers(
+          first: 1000,
+          where: { id_gt: "${lastId}" }
+          orderBy: id,
+          orderDirection: asc
+        ) {
+          id
+        }
+      }`,
+      (res) => res.data.data.lockers,
+      (item) => item.id,
+      config.supSubgraphUrl
+    );
+
+    console.log(`Found ${lockers.length} lockers`);
+
+    if (lockers.length > 0) {
+      // 2. Batch contract calls to get locker data
+      console.log('Fetching locker balances and staked amounts...');
+      const batchSize = 100;
+      let totalReserveBalances = BigInt(0);
+      let totalStakedSup = BigInt(0);
+      let totalLpSup = BigInt(0);
+
+      for (let i = 0; i < lockers.length; i += batchSize) {
+        const batch = lockers.slice(i, i + batchSize);
+        console.log(`Processing batch ${Math.floor(i / batchSize) + 1}/${Math.ceil(lockers.length / batchSize)}`);
+        
+        const balancePromises = batch.map(lockerAddress => 
+          viemClient.readContract({
+            address: lockerAddress as Address,
+            abi: LOCKER_ABI,
+            functionName: 'getAvailableBalance',
+            args: []
+          }).catch(error => {
+            console.debug(`Error fetching available balance for locker ${lockerAddress}: ${error.message}`);
+            return BigInt(0);
+          })
+        );
+
+        const stakedPromises = batch.map(lockerAddress =>
+          viemClient.readContract({
+            address: lockerAddress as Address,
+            abi: LOCKER_ABI,
+            functionName: 'getStakedBalance',
+            args: []
+          }).catch(error => {
+            console.debug(`Error fetching staked balance for locker ${lockerAddress}: ${error.message}`);
+            return BigInt(0);
+          })
+        );
+
+        /*
+        const lpPromises = batch.map(lockerAddress => 
+          viemClient.readContract({
+            address: lockerAddress as Address,
+            abi: LOCKER_ABI,
+            functionName: 'getLiquidityBalance',
+            args: []
+          }).catch(error => {
+            console.debug(`Error fetching LP balance for locker ${lockerAddress}: ${error.message}`);
+            return BigInt(0);
+          })
+        );
+        */
+        // not yet available, we use a placeholder return 0 instead
+        const lpPromises = batch.map(_ => {
+          return BigInt(0);
+        });
+
+        const [balances, stakedBalances, lpBalances] = await Promise.all([
+          Promise.all(balancePromises),
+          Promise.all(stakedPromises),
+          Promise.all(lpPromises)
+        ]);
+
+        // Sum up the batch results
+        for (let j = 0; j < batch.length; j++) {
+          totalReserveBalances += balances[j] as bigint;
+          totalStakedSup += stakedBalances[j] as bigint;
+          totalLpSup += lpBalances[j];
+        }
+      }
+
+      metrics.reserveBalances = Number(totalReserveBalances / BigInt(10 ** 18));
+      metrics.stakedSup = Number(totalStakedSup / BigInt(10 ** 18));
+      metrics.lpSup = Number(totalLpSup / BigInt(10 ** 18));
+    }
+
+    // 3. Get community charge (StakingRewardController balance)
+    console.log('Fetching community charge...');
+    try {
+      const communityChargeBalance = await viemClient.readContract({
+        address: config.baseTokenAddress as Address,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [config.stakingRewardControllerAddress as Address]
+      });
+      metrics.communityCharge = Number((communityChargeBalance as bigint) / BigInt(10 ** 18));
+    } catch (error) {
+      console.error(`Error fetching community charge: ${error}`);
+    }
+
+    // 4. Get investors/team locked SUP (SupVestingFactory totalSupply)
+    console.log('Fetching investors/team locked SUP...');
+    try {
+      const vestingTotalSupply = await viemClient.readContract({
+        address: config.vestingFactoryAddress as Address,
+        abi: SUP_VESTING_FACTORY_ABI,
+        functionName: 'totalSupply',
+        args: []
+      });
+      metrics.investorsTeamLocked = Number((vestingTotalSupply as bigint) / BigInt(10 ** 18));
+    } catch (error) {
+      console.error(`Error fetching vesting total supply: ${error}`);
+    }
+
+    // 5. Get DAO Treasury balance
+    console.log('Fetching DAO Treasury balance...');
+    try {
+      const daoTreasuryBalance = await viemClient.readContract({
+        address: config.baseTokenAddress as Address,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [config.daoTreasuryAddress as Address]
+      });
+      metrics.daoTreasury = Number((daoTreasuryBalance as bigint) / BigInt(10 ** 18));
+    } catch (error) {
+      console.error(`Error fetching DAO Treasury balance: ${error}`);
+    }
+
+    // 6. Get Foundation Treasury balance (on Ethereum)
+    console.log('Fetching Foundation Treasury balance...');
+    try {
+      const ethereumViemClient = createPublicClient({
+        chain: mainnet,
+        transport: http(config.ethereumRpcUrl, {
+          batch: {
+            wait: 100
+          }
+        }),
+      });
+      const foundationTreasuryBalance = await ethereumViemClient.readContract({
+        address: config.ethereumTokenAddress as Address,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [config.foundationTreasuryAddress as Address]
+      });
+      metrics.foundationTreasury = Number((foundationTreasuryBalance as bigint) / BigInt(10 ** 18));
+    } catch (error) {
+      console.error(`Error fetching Foundation Treasury balance: ${error}`);
+    }
+
+    // 7. Calculate streaming out (placeholder - would need fountain subgraph data)
+    console.log('Calculating streaming out...');
+    // This would require querying the fountain subgraph for active streams
+    // For now, set to 0
+    metrics.streamingOut = 0;
+
+    // 8. Calculate "Other" as remainder
+    const accountedFor = metrics.reserveBalances + metrics.communityCharge + 
+                        metrics.investorsTeamLocked + metrics.daoTreasury + 
+                        metrics.foundationTreasury;
+    metrics.other = metrics.totalSupply - accountedFor;
+
+    console.log('Distribution metrics calculated:', {
+      reserveBalances: metrics.reserveBalances,
+      stakedSup: metrics.stakedSup,
+      lpSup: metrics.lpSup,
+      streamingOut: metrics.streamingOut,
+      communityCharge: metrics.communityCharge,
+      investorsTeamLocked: metrics.investorsTeamLocked,
+      daoTreasury: metrics.daoTreasury,
+      foundationTreasury: metrics.foundationTreasury,
+      other: metrics.other,
+      totalSupply: metrics.totalSupply
+    });
+
+    return metrics;
+
+  } catch (error) {
+    console.error(formatAxiosError(error, 'Error fetching distribution metrics'));
     throw error;
   }
 }
