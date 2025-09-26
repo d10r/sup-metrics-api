@@ -213,7 +213,7 @@ const unifiedScoresManager = new MetricsManager<Record<string, MemberData>>(
   {},
   fetchUnifiedScores,
   'unifiedScores.json',
-  0//config.scoresUpdateInterval
+  config.scoresUpdateInterval
 );
 
 // Create distribution metrics manager instance

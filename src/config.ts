@@ -22,8 +22,6 @@ export const config = {
   snapshotScoreUrl: process.env.SNAPSHOT_SCORE_URL || 'https://score.snapshot.org/',
   snapshotSpace: process.env.SNAPSHOT_SPACE || 'superfluid.eth',
   port: parseInt(process.env.PORT || '3000', 10),
-  totalDelegatedScoreUpdateInterval: parseInt(process.env.TOTAL_DELEGATED_SCORE_UPDATE_INTERVAL || '86400', 10),
-  memberScoresUpdateInterval: parseInt(process.env.MEMBER_SCORES_UPDATE_INTERVAL || '86400', 10),
   scoresUpdateInterval: parseInt(process.env.SCORES_UPDATE_INTERVAL || '86400', 10),
   vpCalcChunkSize: parseInt(process.env.VP_CALC_CHUNK_SIZE || '5000', 10),
   // Distribution metrics contract addresses
