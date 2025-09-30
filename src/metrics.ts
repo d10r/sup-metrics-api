@@ -10,7 +10,8 @@ import {
   DaoMember,
   DaoMembersResponse,
   DistributionMetrics,
-  DistributionMetricsResponse
+  DistributionMetricsResponse,
+  VestingSchedule
 } from './types'; 
 import snapshot from '@snapshot-labs/snapshot.js';
 import snapshotStrategies from '@d10r/snapshot-strategies';
@@ -409,7 +410,8 @@ async function getInvestorsAndTeamAddresses(): Promise<string[]> {
     
     // Step 2: Get receivers of vesting schedules
     console.log('Fetching vesting schedule receivers...');
-    const receivers = await getVestingScheduleReceivers(vestingSenderContracts);
+    const vestingSchedules = await getVestingSchedules(vestingSenderContracts, null);
+    const receivers = [...new Set(vestingSchedules.map(schedule => schedule.receiver.toLowerCase()))];
     console.log(`Found ${receivers.length} vesting schedule receivers`);
     
     return receivers;
@@ -448,42 +450,55 @@ async function getVestingSenderContracts(): Promise<string[]> {
   return Array.from(senderContracts);
 }
 
-// Function to get vesting schedule receivers
-async function getVestingScheduleReceivers(senderContracts: string[]): Promise<string[]> {
-  // Split sender contracts into chunks to avoid query size limits
-  const chunkSize = 100; // Adjust based on subgraph limits
-  const allReceivers = new Set<string>();
-  
-  for (let i = 0; i < senderContracts.length; i += chunkSize) {
-    const chunk = senderContracts.slice(i, i + chunkSize);
-    const senderInClause = chunk.map(addr => `"${addr}"`).join(', ');
-    
-    const query = `
-      {
+// Get SUP vesting schedules with optional filtering by senders and/or receivers
+async function getVestingSchedules(
+  senders: string[] | null = null,
+  receivers: string[] | null = null
+): Promise<VestingSchedule[]> {
+  try {
+    const vestingSchedules = await queryAllPages(
+      (lastId) => `{
         vestingSchedules(
+          first: 1000,
           where: {
             superToken: "${config.baseTokenAddress}",
-            sender_in: [${senderInClause}]
-          }
+            cliffAndFlowExecutedAt_not: null,
+            endExecutedAt: null,
+            ${senders?.length ? `sender_in: [${senders.map(addr => `"${addr.toLowerCase()}"`).join(', ')}],` : ''}
+            ${receivers?.length ? `receiver_in: [${receivers.map(addr => `"${addr.toLowerCase()}"`).join(', ')}],` : ''}
+            id_gt: "${lastId}"
+          },
+          orderBy: id,
+          orderDirection: asc
         ) {
+          id
+          sender
           receiver
+          cliffAndFlowDate
+          endDate
+          flowRate
+          cliffAmount
+          remainderAmount
+          claimValidityDate
         }
-      }
-    `;
-
-    try {
-      const response = await axios.post(config.vestingSubgraphUrl, { query });
-      const vestingSchedules = response.data.data.vestingSchedules;
-      
-      for (const schedule of vestingSchedules) {
-        allReceivers.add(schedule.receiver.toLowerCase());
-      }
-    } catch (error) {
-      console.error(`Error fetching vesting schedules for chunk ${i}-${i + chunkSize}:`, error);
-    }
+      }`,
+      (res) => res.data.data.vestingSchedules,
+      (item) => ({
+        ...item,
+        cliffAndFlowDate: parseInt(item.cliffAndFlowDate),
+        endDate: parseInt(item.endDate),
+        flowRate: BigInt(item.flowRate),
+        cliffAmount: BigInt(item.cliffAmount),
+        remainderAmount: BigInt(item.remainderAmount),
+        claimValidityDate: parseInt(item.claimValidityDate)
+      }),
+      config.vestingSubgraphUrl
+    );
+    return vestingSchedules;
+  } catch (error) {
+    console.error('Error fetching vesting schedules:', error);
+    return [];
   }
-  
-  return Array.from(allReceivers);
 }
 
 // Keep existing helper functions
@@ -868,57 +883,68 @@ async function fetchVotingMetrics(): Promise<Record<string, MemberData>> {
     // Get all pool members (which are lockers)
     for (const poolId of uniquePools) {
       console.log(`Getting members for pool ${poolId} ...`);
-      try {
-        const poolMembers = await queryAllPages(
-          (lastId) => `{
-            poolMembers(
-              first: 1000,
-              where: {
-                pool: "${poolId}",
-                id_gt: "${lastId}"
-              },
-              orderBy: id,
-              orderDirection: asc
-            ) {
+
+      const poolMembers = await queryAllPages(
+        (lastId) => `{
+          poolMembers(
+            first: 1000,
+            where: {
+              pool: "${poolId}",
+              id_gt: "${lastId}"
+            },
+            orderBy: id,
+            orderDirection: asc
+          ) {
+            id
+            account {
               id
-              account {
-                id
-              }
             }
-          }`,
-          (res) => res.data.data.poolMembers,
-          (item) => item.account.id,
-          config.sfSubgraphUrl
-        );
-        console.log(`Found ${poolMembers.length} pool members for pool ${poolId}, now getting owners...`);
+          }
+        }`,
+        (res) => res.data.data.poolMembers,
+        (item) => item.account.id,
+        config.sfSubgraphUrl
+      );
+      console.log(`Found ${poolMembers.length} pool members for pool ${poolId}, now getting owners...`);
+      
+      // Get owners for each locker
+      const ownerPromises = poolMembers.map(locker => 
+        viemClient.readContract({
+          address: locker as Address,
+          abi: LOCKER_ABI,
+          functionName: 'lockerOwner',
+          args: []
+        }).catch(error => {
+          // this is allowed to fail because it's possible to have pool members that are not lockers
+          return { error: true, address: locker, errorMessage: error.message };
+        })
+      );
         
-        // Get owners for each locker
-        const ownerPromises = poolMembers.map(locker => 
-          viemClient.readContract({
-            address: locker as Address,
-            abi: LOCKER_ABI,
-            functionName: 'lockerOwner',
-            args: []
-          }).catch(error => {
-            console.debug(`Error fetching lockerOwner for ${locker}: ${error.message}`);
-            return null;
-          })
-        );
-        
-        const results = await Promise.allSettled(ownerPromises);
-        console.log(`Found ${results.length} owners for pool ${poolId}`);
-        
-        for (let i = 0; i < results.length; i++) {
-          const result = results[i];
-          if (result.status === 'fulfilled' && result.value !== null) {
+      const results = await Promise.allSettled(ownerPromises);
+      console.log(`Found ${results.length} owners for pool ${poolId}`);
+      
+      // Collect failed addresses for summary logging
+      const failedAddresses: string[] = [];
+      
+      for (let i = 0; i < results.length; i++) {
+        const result = results[i];
+        if (result.status === 'fulfilled') {
+          if (result.value && typeof result.value === 'object' && 'error' in result.value) {
+            // This is an error result
+            failedAddresses.push(result.value.address);
+          } else if (result.value !== null) {
+            // This is a successful result
             const owner = result.value as Address;
             const lockerAddress = poolMembers[i];
             lockerToOwnerMap.set(lockerAddress.toLowerCase(), owner.toLowerCase());
             uniqueAccounts.add(owner.toLowerCase());
           }
         }
-      } catch (error) {
-        console.error(formatAxiosError(error, `Error fetching members for pool ${poolId}`));
+      }
+      
+      // Print summary of failed addresses if any
+      if (failedAddresses.length > 0) {
+        console.log(`### Failed to get lockerOwner for ${failedAddresses.length} addresses: ${failedAddresses.join(', ')}`);
       }
     }
 
@@ -1057,7 +1083,79 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
       totalSupply: 1000000000 // 1B SUP tokens
     };
 
-    // 1. Get all locker addresses from the locker subgraph
+    // Get community charge (StakingRewardController balance)
+    console.log('Fetching community charge...');
+    const communityChargeBalance = await viemClient.readContract({
+      address: config.baseTokenAddress as Address,
+      abi: erc20Abi,
+      functionName: 'balanceOf',
+      args: [config.stakingRewardControllerAddress as Address]
+    });
+    metrics.communityCharge = Number((communityChargeBalance as bigint) / BigInt(10 ** 18));
+
+    // Get investors/team locked SUP (SupVestingFactory totalSupply)
+    console.log('Fetching investors/team locked SUP...');
+    const vestingTotalSupply = await viemClient.readContract({
+      address: config.vestingFactoryAddress as Address,
+      abi: SUP_VESTING_FACTORY_ABI,
+      functionName: 'totalSupply',
+      args: []
+    });
+    metrics.investorsTeamLocked = Number((vestingTotalSupply as bigint) / BigInt(10 ** 18));
+
+    // Get DAO Treasury balance and vesting schedule amounts
+    console.log('Fetching DAO Treasury balance and vesting schedules...');
+    const daoTreasuryBalance = await viemClient.readContract({
+      address: config.baseTokenAddress as Address,
+      abi: erc20Abi,
+      functionName: 'balanceOf',
+      args: [config.daoTreasuryAddress as Address]
+    });
+    
+    // Get flowing vesting schedules for DAO treasury
+    const vestingSchedules = await getVestingSchedules(null, [config.daoTreasuryAddress]);
+
+    // Calculate remaining amount to be streamed from vesting schedules
+    let totalVestingAmount = BigInt(0);
+    const now = Math.floor(Date.now() / 1000);
+    
+    for (const schedule of vestingSchedules) {
+      // Only calculate if the schedule hasn't ended yet
+      if (schedule.endDate > now) {
+        const timeRemaining = schedule.endDate - now;
+        const remainingAmount = schedule.flowRate * BigInt(timeRemaining);
+        totalVestingAmount += remainingAmount;
+        
+        console.log(`DAO treasury is receiving a scheduled flow from ${schedule.sender} with flowRate=${schedule.flowRate.toString()}, timeRemaining=${timeRemaining}s, remainingAmount=${remainingAmount.toString()}`);
+      }
+    }
+    
+    // Add current balance + remaining vesting amount
+    const currentBalance = Number((daoTreasuryBalance as bigint) / BigInt(10 ** 18));
+    const remainingVestingAmount = Number(totalVestingAmount / BigInt(10 ** 18));
+    metrics.daoTreasury = currentBalance + remainingVestingAmount;
+    
+    console.log(`DAO Treasury: current balance=${currentBalance}, remaining vesting=${remainingVestingAmount}, total=${metrics.daoTreasury}`);
+
+    // Get Foundation Treasury balance (on Ethereum)
+    console.log('Fetching Foundation Treasury balance...');
+    const ethereumViemClient = createPublicClient({
+      chain: mainnet,
+      transport: http(config.ethereumRpcUrl, {
+        batch: {
+          wait: 100
+        }
+      }),
+    });
+    const foundationTreasuryBalance = await ethereumViemClient.readContract({
+      address: config.ethereumTokenAddress as Address,
+      abi: erc20Abi,
+      functionName: 'balanceOf',
+      args: [config.foundationTreasuryAddress as Address]
+    });
+    metrics.foundationTreasury = Number((foundationTreasuryBalance as bigint) / BigInt(10 ** 18));
+
+    // Get all locker addresses from the locker subgraph
     console.log('Fetching locker addresses from subgraph...');
     const lockers = await queryAllPages(
       (lastId) => `{
@@ -1078,7 +1176,7 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
     console.log(`Found ${lockers.length} lockers`);
 
     if (lockers.length > 0) {
-      // 2. Batch contract calls to get locker data
+      // Batch contract calls to get locker data
       console.log('Fetching locker balances and staked amounts...');
       const batchSize = 100;
       let totalReserveBalances = BigInt(0);
@@ -1150,77 +1248,13 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
       metrics.lpSup = Number(totalLpSup / BigInt(10 ** 18));
     }
 
-    // 3. Get community charge (StakingRewardController balance)
-    console.log('Fetching community charge...');
-    try {
-      const communityChargeBalance = await viemClient.readContract({
-        address: config.baseTokenAddress as Address,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [config.stakingRewardControllerAddress as Address]
-      });
-      metrics.communityCharge = Number((communityChargeBalance as bigint) / BigInt(10 ** 18));
-    } catch (error) {
-      console.error(`Error fetching community charge: ${error}`);
-    }
-
-    // 4. Get investors/team locked SUP (SupVestingFactory totalSupply)
-    console.log('Fetching investors/team locked SUP...');
-    try {
-      const vestingTotalSupply = await viemClient.readContract({
-        address: config.vestingFactoryAddress as Address,
-        abi: SUP_VESTING_FACTORY_ABI,
-        functionName: 'totalSupply',
-        args: []
-      });
-      metrics.investorsTeamLocked = Number((vestingTotalSupply as bigint) / BigInt(10 ** 18));
-    } catch (error) {
-      console.error(`Error fetching vesting total supply: ${error}`);
-    }
-
-    // 5. Get DAO Treasury balance
-    console.log('Fetching DAO Treasury balance...');
-    try {
-      const daoTreasuryBalance = await viemClient.readContract({
-        address: config.baseTokenAddress as Address,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [config.daoTreasuryAddress as Address]
-      });
-      metrics.daoTreasury = Number((daoTreasuryBalance as bigint) / BigInt(10 ** 18));
-    } catch (error) {
-      console.error(`Error fetching DAO Treasury balance: ${error}`);
-    }
-
-    // 6. Get Foundation Treasury balance (on Ethereum)
-    console.log('Fetching Foundation Treasury balance...');
-    try {
-      const ethereumViemClient = createPublicClient({
-        chain: mainnet,
-        transport: http(config.ethereumRpcUrl, {
-          batch: {
-            wait: 100
-          }
-        }),
-      });
-      const foundationTreasuryBalance = await ethereumViemClient.readContract({
-        address: config.ethereumTokenAddress as Address,
-        abi: erc20Abi,
-        functionName: 'balanceOf',
-        args: [config.foundationTreasuryAddress as Address]
-      });
-      metrics.foundationTreasury = Number((foundationTreasuryBalance as bigint) / BigInt(10 ** 18));
-    } catch (error) {
-      console.error(`Error fetching Foundation Treasury balance: ${error}`);
-    }
-
-    // 7. Calculate streaming out (placeholder - would need fountain subgraph data)
+    // Calculate streaming out (placeholder - would need fountain subgraph data)
     console.log('Calculating streaming out...');
     // This would require querying the fountain subgraph for active streams
     // For now, set to 0
     metrics.streamingOut = 0;
 
-    // 8. Calculate "Other" as remainder
+    // Calculate "Other" as remainder
     const accountedFor = metrics.reserveBalances + metrics.communityCharge + 
                         metrics.investorsTeamLocked + metrics.daoTreasury + 
                         metrics.foundationTreasury;
