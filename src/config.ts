@@ -17,7 +17,7 @@ export const config = {
   vestingSubgraphUrl: process.env.VESTING_SUBGRAPH_URL!, // base-mainnet vesting subgraph
 
   // Snapshot
-  delegationSubgraphId: process.env.DELEGATION_SUBGRAPH_ID || '9qxDXD1SNnZriMMkCRVAmSdsv4KP6Xvnr8U2CRc5HQWh',
+  delegationSubgraphId: process.env.DELEGATION_SUBGRAPH_ID || '9qxDXD1SNnZriMMkCRVAmSdsv4KP6Xvnr8U2CRc5HQWh', // snapshot-base
   snapshotHubUrl: process.env.SNAPSHOT_HUB_URL || 'https://hub.snapshot.org/graphql',
   snapshotScoreUrl: process.env.SNAPSHOT_SCORE_URL || 'https://score.snapshot.org/',
   snapshotSpace: process.env.SNAPSHOT_SPACE || 'superfluid.eth',
