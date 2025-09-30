@@ -394,6 +394,98 @@ export const getDistributionMetrics = (): DistributionMetricsResponse => {
   };
 };
 
+// Function to get investors and team addresses from vesting schedules
+async function getInvestorsAndTeamAddresses(): Promise<string[]> {
+  try {
+    // Step 1: Get vesting sender contracts from transfer events
+    console.log('Fetching vesting sender contracts from transfer events...');
+    const vestingSenderContracts = await getVestingSenderContracts();
+    console.log(`Found ${vestingSenderContracts.length} vesting sender contracts`);
+    
+    if (vestingSenderContracts.length === 0) {
+      console.log('No vesting sender contracts found, returning empty array');
+      return [];
+    }
+    
+    // Step 2: Get receivers of vesting schedules
+    console.log('Fetching vesting schedule receivers...');
+    const receivers = await getVestingScheduleReceivers(vestingSenderContracts);
+    console.log(`Found ${receivers.length} vesting schedule receivers`);
+    
+    return receivers;
+  } catch (error) {
+    console.error('Error fetching investors and team addresses:', error);
+    return [];
+  }
+}
+
+// Function to get vesting sender contracts from transfer events
+async function getVestingSenderContracts(): Promise<string[]> {
+  const query = `
+    {
+      transferEvents(
+        where: {
+          token: "${config.baseTokenAddress}",
+          from: "${config.vestingTreasuryAddress}"
+        }
+      ) {
+        to {
+          id
+        }
+      }
+    }
+  `;
+
+  const response = await axios.post(config.sfSubgraphUrl, { query });
+  const transferEvents = response.data.data.transferEvents;
+  
+  // Extract unique addresses from transfer events
+  const senderContracts = new Set<string>();
+  for (const event of transferEvents) {
+    senderContracts.add(event.to.id.toLowerCase());
+  }
+  
+  return Array.from(senderContracts);
+}
+
+// Function to get vesting schedule receivers
+async function getVestingScheduleReceivers(senderContracts: string[]): Promise<string[]> {
+  // Split sender contracts into chunks to avoid query size limits
+  const chunkSize = 100; // Adjust based on subgraph limits
+  const allReceivers = new Set<string>();
+  
+  for (let i = 0; i < senderContracts.length; i += chunkSize) {
+    const chunk = senderContracts.slice(i, i + chunkSize);
+    const senderInClause = chunk.map(addr => `"${addr}"`).join(', ');
+    
+    const query = `
+      {
+        vestingSchedules(
+          where: {
+            superToken: "${config.baseTokenAddress}",
+            sender_in: [${senderInClause}]
+          }
+        ) {
+          receiver
+        }
+      }
+    `;
+
+    try {
+      const response = await axios.post(config.vestingSubgraphUrl, { query });
+      const vestingSchedules = response.data.data.vestingSchedules;
+      
+      for (const schedule of vestingSchedules) {
+        allReceivers.add(schedule.receiver.toLowerCase());
+      }
+    } catch (error) {
+      console.error(`Error fetching vesting schedules for chunk ${i}-${i + chunkSize}:`, error);
+    }
+  }
+  
+  return Array.from(allReceivers);
+}
+
 // Keep existing helper functions
 async function queryAllPages<T>(
   queryFn: (lastId: string) => string,
@@ -479,7 +571,7 @@ export const getVotingPowerBatch = async (addresses: string[], includeDelegation
     console.log(`Processing ${addresses.length} addresses in ${chunks.length} chunks of max ${config.vpCalcChunkSize}`);
     
     // Process each chunk and combine results
-    const allScores: any[] = [{}, {}, {}]; // 0: fountainhead, 1: delegate, 2: asup
+    const allScores: any[] = [{}, {}, {}]; // 0: fountainhead, 1: delegate, 2: vsup
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
       process.stdout.write(`Processing chunk ${i+1}/${chunks.length} (${chunk.length} addresses)...`);
@@ -513,7 +605,7 @@ export const getVotingPowerBatch = async (addresses: string[], includeDelegation
     //fs.writeFileSync('scores.json', JSON.stringify(allScores, null, 2));
     const scoresFountainhead = allScores[0];
     const scoresDelegation = includeDelegations ? allScores[1] : {};
-    const scoresAsup = includeDelegations ? allScores[2] : allScores[1];
+    const scoresVsup = includeDelegations ? allScores[2] : allScores[1];
 
     // Process the scores according to the required format
     const result: VotingPower[] = addresses.map(address => {
@@ -521,7 +613,7 @@ export const getVotingPowerBatch = async (addresses: string[], includeDelegation
 
       return {
         address: addressLower,
-        own: (scoresFountainhead[addressLower] || 0) + (scoresAsup[addressLower] || 0),
+        own: (scoresFountainhead[addressLower] || 0) + (scoresVsup[addressLower] || 0),
         delegated: scoresDelegation[addressLower]
       };
     });
@@ -734,7 +826,7 @@ async function fetchVotingMetrics(): Promise<Record<string, MemberData>> {
     console.log('Starting voting metrics fetch...');
     const currentTimestamp = Math.floor(Date.now() / 1000);
     
-    // 1. Get pool members
+    // 1. Get members of pools (lockers) funded via EP Program Manager flow distributions
     const query = `
       query {
         flowDistributionUpdatedEvents(
@@ -761,18 +853,17 @@ async function fetchVotingMetrics(): Promise<Record<string, MemberData>> {
     
     console.log(`Found ${uniquePools.size} unique pools`);
     
-    // Set to store unique accounts
-    const uniqueAccounts = new Set<string>();
-
-    // Add aSUP holders (these are accounts, not lockers)
-    const asupHolders = (JSON.parse(fs.readFileSync('./asupHolders.json', 'utf8')) as string[])
-      .map(holder => holder.toLowerCase());
-
-    console.log(`Adding ${asupHolders.length} aSUP holders to unique accounts`);
-    asupHolders.forEach(holder => uniqueAccounts.add(holder));
-
-    // Map to store locker -> owner mapping
+    // Map for locker -> owner mapping
     const lockerToOwnerMap = new Map<string, string>();
+  
+    // Set of accounts to be considered (snapshot doesn't know the set of voting power holders)
+    const uniqueAccounts = new Set<string>();
+    
+
+    // Get investors and team addresses dynamically from vesting schedules
+    const investorsAndTeam = await getInvestorsAndTeamAddresses();
+    console.log(`Adding ${investorsAndTeam.length} investors and team addresses to unique accounts`);
+    investorsAndTeam.forEach(address => uniqueAccounts.add(address.toLowerCase()));
     
     // Get all pool members (which are lockers)
     for (const poolId of uniquePools) {
