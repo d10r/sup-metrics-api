@@ -397,32 +397,9 @@ export const getDistributionMetrics = (): DistributionMetricsResponse => {
 
 // Function to get investors and team addresses from vesting schedules
 async function getInvestorsAndTeamAddresses(): Promise<string[]> {
-  try {
-    // Step 1: Get vesting sender contracts from transfer events
-    console.log('Fetching vesting sender contracts from transfer events...');
-    const vestingSenderContracts = await getVestingSenderContracts();
-    console.log(`Found ${vestingSenderContracts.length} vesting sender contracts`);
-    
-    if (vestingSenderContracts.length === 0) {
-      console.log('No vesting sender contracts found, returning empty array');
-      return [];
-    }
-    
-    // Step 2: Get receivers of vesting schedules
-    console.log('Fetching vesting schedule receivers...');
-    const vestingSchedules = await getVestingSchedules(vestingSenderContracts, null);
-    const receivers = [...new Set(vestingSchedules.map(schedule => schedule.receiver.toLowerCase()))];
-    console.log(`Found ${receivers.length} vesting schedule receivers`);
-    
-    return receivers;
-  } catch (error) {
-    console.error('Error fetching investors and team addresses:', error);
-    return [];
-  }
-}
-
-// Function to get vesting sender contracts from transfer events
-async function getVestingSenderContracts(): Promise<string[]> {
+  // Step 1: Get vesting sender contracts from transfer events
+  console.log('Fetching vesting sender contracts from transfer events...');
+  
   const query = `
     {
       transferEvents(
@@ -447,13 +424,30 @@ async function getVestingSenderContracts(): Promise<string[]> {
     senderContracts.add(event.to.id.toLowerCase());
   }
   
-  return Array.from(senderContracts);
+  const vestingSenderContracts = Array.from(senderContracts);
+  console.log(`Found ${vestingSenderContracts.length} vesting sender contracts`);
+  
+  if (vestingSenderContracts.length === 0) {
+    console.log('No vesting sender contracts found, returning empty array');
+    return [];
+  }
+  
+  // Step 2: Get receivers of vesting schedules
+  console.log('Fetching vesting schedule receivers...');
+  const vestingSchedules = await getVestingSchedules(vestingSenderContracts, null);
+  console.log(`Found ${vestingSchedules.length} vesting schedules`);
+  const receivers = [...new Set(vestingSchedules.map(schedule => schedule.receiver.toLowerCase()))];
+  console.log(`Found ${receivers.length} vesting schedule receivers`);
+    
+  return receivers;
 }
+
 
 // Get SUP vesting schedules with optional filtering by senders and/or receivers
 async function getVestingSchedules(
   senders: string[] | null = null,
-  receivers: string[] | null = null
+  receivers: string[] | null = null,
+  onlyFlowing: boolean = false
 ): Promise<VestingSchedule[]> {
   try {
     const vestingSchedules = await queryAllPages(
@@ -462,8 +456,7 @@ async function getVestingSchedules(
           first: 1000,
           where: {
             superToken: "${config.baseTokenAddress}",
-            cliffAndFlowExecutedAt_not: null,
-            endExecutedAt: null,
+            ${onlyFlowing ? 'cliffAndFlowExecutedAt_not: null, endExecutedAt: null,' : ''}
             ${senders?.length ? `sender_in: [${senders.map(addr => `"${addr.toLowerCase()}"`).join(', ')}],` : ''}
             ${receivers?.length ? `receiver_in: [${receivers.map(addr => `"${addr.toLowerCase()}"`).join(', ')}],` : ''}
             id_gt: "${lastId}"
@@ -1113,7 +1106,7 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
     });
     
     // Get flowing vesting schedules for DAO treasury
-    const vestingSchedules = await getVestingSchedules(null, [config.daoTreasuryAddress]);
+    const vestingSchedules = await getVestingSchedules(null, [config.daoTreasuryAddress], true);
 
     // Calculate remaining amount to be streamed from vesting schedules
     let totalVestingAmount = BigInt(0);
