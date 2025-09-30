@@ -141,4 +141,15 @@ export interface DistributionMetricsResponse {
   metrics: DistributionMetrics;
   /** Unix timestamp of last update */
   lastUpdatedAt: number;
-} 
+}
+
+export type VestingSchedule = {
+  sender: string;
+  receiver: string;
+  cliffAndFlowDate: number;
+  endDate: number;
+  flowRate: bigint;
+  cliffAmount: bigint;
+  remainderAmount: bigint;
+  claimValidityDate: number;
+};
