@@ -320,7 +320,7 @@ export const getTotalDelegatedScore = (): TotalDelegatedScoreResponse => {
   );
 
   // Convert to per-delegate format
-  const perDelegateScore = Object.entries(unifiedData.data)
+  const perDelegateScore = Object.entries(unifiedData)
     .filter(([_, member]) => member.delegatedVp && member.delegatedVp > 0)
     .map(([address, member]) => ({
       address,
