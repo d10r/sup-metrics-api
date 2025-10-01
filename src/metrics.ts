@@ -653,7 +653,7 @@ export const getVotingPower = async (address: string): Promise<VotingPower> => {
     if (response.data?.result?.vp) {
       const totalVp = response.data.result.vp;
       // TODO: add check that item 0 is indeed the own voting power
-      const ownVp = response.data.result.vp_by_strategy[0];
+      const ownVp = response.data.result.vp_by_strategy[0] + response.data.result.vp_by_strategy[2];
       const delegatedVp = response.data.result.vp_by_strategy[1];
       if (totalVp - ownVp !== delegatedVp) {
         console.error(`Voting power for ${address}: ${totalVp} (delegated: ${delegatedVp}, own: ${ownVp})`);
