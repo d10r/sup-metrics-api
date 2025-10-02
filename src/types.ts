@@ -111,7 +111,7 @@ export interface DaoMembersResponse {
  * Distribution metrics for SUP token allocation
  */
 export interface DistributionMetrics {
-  /** Total amount of SUP distributed to lockers but not yet unlocked */
+  /** Total amount of SUP distributed to lockers but not yet unlocked. Includes staked SUP and SUP in fontaines. */
   reserveBalances: number;
   /** Portion currently staked via lockers */
   stakedSup: number;
