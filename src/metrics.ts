@@ -642,6 +642,29 @@ async function getInvestorsAndTeamAddresses(): Promise<string[]> {
   return receivers;
 }
 
+async function getDaoTreasuryBalanceWei(
+  client: typeof viemClient,
+  tokenAddress: Address,
+  blockNumber?: bigint
+): Promise<bigint> {
+  const daoTreasuryBucketAddresses = [
+    config.daoTreasuryAddress,
+    config.foundationSprOpsAddress,
+  ];
+  const balances = await Promise.all(
+    daoTreasuryBucketAddresses.map((address) =>
+      client.readContract({
+        address: tokenAddress,
+        abi: erc20Abi,
+        functionName: 'balanceOf',
+        args: [address as Address],
+        ...(blockNumber !== undefined ? { blockNumber } : {}),
+      }) as Promise<bigint>
+    )
+  );
+  return balances.reduce((sum, balance) => sum + balance, 0n);
+}
+
 
 // Get SUP vesting schedules with optional filtering by senders and/or receivers
 async function getVestingSchedules(
@@ -909,13 +932,7 @@ async function calculateDistributionMetricsAtTimestamp(
       blockNumber: baseBlock
     }),
     investorsTeamLockedPromise,
-    viemClient.readContract({
-      address: config.baseTokenAddress as Address,
-      abi: erc20Abi,
-      functionName: 'balanceOf',
-      args: [config.daoTreasuryAddress as Address],
-      blockNumber: baseBlock
-    }),
+    getDaoTreasuryBalanceWei(viemClient, config.baseTokenAddress as Address, baseBlock),
     viemClient.readContract({
       address: config.baseTokenAddress as Address,
       abi: erc20Abi,
@@ -1800,12 +1817,10 @@ async function fetchDistributionMetrics(): Promise<DistributionMetrics> {
 
     // Get DAO Treasury balance and vesting schedule amounts
     console.log('Fetching DAO Treasury balance and vesting schedules...');
-    const daoTreasuryBalance = await viemClient.readContract({
-      address: config.baseTokenAddress as Address,
-      abi: erc20Abi,
-      functionName: 'balanceOf',
-      args: [config.daoTreasuryAddress as Address]
-    });
+    const daoTreasuryBalance = await getDaoTreasuryBalanceWei(
+      viemClient,
+      config.baseTokenAddress as Address
+    );
     
     // Get flowing vesting schedules for DAO treasury
     const vestingSchedules = await getVestingSchedules(null, [config.daoTreasuryAddress], true);
