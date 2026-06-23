@@ -1,7 +1,13 @@
 src/swagger.json
 src/routes.ts 
 .env
+!.env.example
+.env.*
 dist/
 node_modules/
 .cache/
 data/
+.tmp
+logs
+dependencies
+.aider*

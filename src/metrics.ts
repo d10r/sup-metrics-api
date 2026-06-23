@@ -673,51 +673,45 @@ async function getVestingSchedules(
   onlyFlowing: boolean = false,
   blockNumber?: bigint
 ): Promise<VestingSchedule[]> {
-  try {
-    const blockClause = blockNumber !== undefined ? `block: { number: ${blockNumber.toString()} },` : '';
-    const vestingSchedules = await queryAllPages(
-      (lastId) => `{
-        vestingSchedules(
-          first: 1000,
-          ${blockClause}
-          where: {
-            superToken: "${config.baseTokenAddress}",
-            ${onlyFlowing ? 'cliffAndFlowExecutedAt_not: null, endExecutedAt: null,' : ''}
-            ${senders?.length ? `sender_in: [${senders.map(addr => `"${addr.toLowerCase()}"`).join(', ')}],` : ''}
-            ${receivers?.length ? `receiver_in: [${receivers.map(addr => `"${addr.toLowerCase()}"`).join(', ')}],` : ''}
-            id_gt: "${lastId}"
-          },
-          orderBy: id,
-          orderDirection: asc
-        ) {
-          id
-          sender
-          receiver
-          cliffAndFlowDate
-          endDate
-          flowRate
-          cliffAmount
-          remainderAmount
-          claimValidityDate
-        }
-      }`,
-      (res) => res.data.data.vestingSchedules,
-      (item) => ({
-        ...item,
-        cliffAndFlowDate: parseInt(item.cliffAndFlowDate),
-        endDate: parseInt(item.endDate),
-        flowRate: BigInt(item.flowRate),
-        cliffAmount: BigInt(item.cliffAmount),
-        remainderAmount: BigInt(item.remainderAmount),
-        claimValidityDate: parseInt(item.claimValidityDate)
-      }),
-      config.vestingSubgraphUrl
-    );
-    return vestingSchedules;
-  } catch (error) {
-    console.error('Error fetching vesting schedules:', error);
-    return [];
-  }
+  const blockClause = blockNumber !== undefined ? `block: { number: ${blockNumber.toString()} },` : '';
+  return queryAllPages(
+    (lastId) => `{
+      vestingSchedules(
+        first: 1000,
+        ${blockClause}
+        where: {
+          superToken: "${config.baseTokenAddress}",
+          ${onlyFlowing ? 'cliffAndFlowExecutedAt_not: null, endExecutedAt: null,' : ''}
+          ${senders?.length ? `sender_in: [${senders.map(addr => `"${addr.toLowerCase()}"`).join(', ')}],` : ''}
+          ${receivers?.length ? `receiver_in: [${receivers.map(addr => `"${addr.toLowerCase()}"`).join(', ')}],` : ''}
+          id_gt: "${lastId}"
+        },
+        orderBy: id,
+        orderDirection: asc
+      ) {
+        id
+        sender
+        receiver
+        cliffAndFlowDate
+        endDate
+        flowRate
+        cliffAmount
+        remainderAmount
+        claimValidityDate
+      }
+    }`,
+    (res) => res.data.data.vestingSchedules,
+    (item) => ({
+      ...item,
+      cliffAndFlowDate: parseInt(item.cliffAndFlowDate),
+      endDate: parseInt(item.endDate),
+      flowRate: BigInt(item.flowRate),
+      cliffAmount: BigInt(item.cliffAmount),
+      remainderAmount: BigInt(item.remainderAmount),
+      claimValidityDate: parseInt(item.claimValidityDate)
+    }),
+    config.vestingSubgraphUrl
+  );
 }
 
 interface ProgramManagerStreamState {
